@@ -444,7 +444,7 @@ main { padding: 16px; }
                 sendJsonResponse(writer, "{\"error\":\"Failed to list directory\"}")
             }
         } catch (e: Exception) {
-            sendJsonResponse(writer, "{\"error\":\"${e.message}\"}")
+            sendJsonResponse(writer, "{\"error\":\"${jsonEscape(e.message ?: "Unknown error")}\"}")
         }
     }
 
@@ -466,7 +466,7 @@ main { padding: 16px; }
                 sendJsonResponse(writer, "{\"error\":\"Failed to read file\"}")
             }
         } catch (e: Exception) {
-            sendJsonResponse(writer, "{\"error\":\"${e.message}\"}")
+            sendJsonResponse(writer, "{\"error\":\"${jsonEscape(e.message ?: "Unknown error")}\"}")
         }
     }
 
@@ -508,7 +508,7 @@ main { padding: 16px; }
                 sendJsonResponse(writer, "{\"error\":\"Failed to delete\"}")
             }
         } catch (e: Exception) {
-            sendJsonResponse(writer, "{\"error\":\"${e.message}\"}")
+            sendJsonResponse(writer, "{\"error\":\"${jsonEscape(e.message ?: "Unknown error")}\"}")
         }
     }
 
@@ -523,7 +523,7 @@ main { padding: 16px; }
                 sendJsonResponse(writer, "{\"error\":\"Failed to create directory\"}")
             }
         } catch (e: Exception) {
-            sendJsonResponse(writer, "{\"error\":\"${e.message}\"}")
+            sendJsonResponse(writer, "{\"error\":\"${jsonEscape(e.message ?: "Unknown error")}\"}")
         }
     }
 
@@ -584,7 +584,7 @@ main { padding: 16px; }
                 val targetPath = "${flipperPath.trimEnd('/')}/$safeName"
                 val writeResult = flipperFileSystem.writeFileBytes(targetPath, fileBytes)
                 if (writeResult.isFailure) {
-                    sendJsonResponse(writer, "{\"error\":\"Failed to write $safeName\"}")
+                    sendJsonResponse(writer, "{\"error\":\"Failed to write ${jsonEscape(safeName)}\"}")
                     return
                 }
 
@@ -601,7 +601,7 @@ main { padding: 16px; }
                 sendJsonResponse(writer, "{\"error\":\"No files found in upload\"}")
             }
         } catch (e: Exception) {
-            sendJsonResponse(writer, "{\"error\":\"${e.message}\"}")
+            sendJsonResponse(writer, "{\"error\":\"${jsonEscape(e.message ?: "Unknown error")}\"}")
         }
     }
 
@@ -692,7 +692,12 @@ main { padding: 16px; }
     }
 
     private fun jsonEscape(value: String): String {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+        return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
     }
 
     private fun serve404(writer: PrintWriter) {
