@@ -27,13 +27,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vesper.flipper.ble.FlipperBleService
+import com.vesper.flipper.data.SettingsStore
 import com.vesper.flipper.ui.screen.*
 import com.vesper.flipper.ui.theme.VesperBackdropBrush
 import com.vesper.flipper.ui.theme.VesperTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var settingsStore: SettingsStore
 
     private val requiredPermissions = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -65,7 +69,8 @@ class MainActivity : ComponentActivity() {
         checkAndRequestPermissions()
 
         setContent {
-            VesperTheme(darkTheme = true) {
+            val darkMode by settingsStore.darkMode.collectAsState(initial = true)
+            VesperTheme(darkTheme = darkMode) {
                 VesperApp()
             }
         }
@@ -134,8 +139,16 @@ fun VesperApp() {
                     val navBackStackEntry by navController.currentBackStackEntryAsState()
                     val currentDestination = navBackStackEntry?.destination
 
+                    // Sub-screens launched from Chat's overflow menu
+                    val chatSubScreens = setOf(Screen.Files.route, Screen.Audit.route)
+                    val currentRoute = currentDestination?.route
+
                     screens.forEach { screen ->
-                        val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
+                        val selected = if (screen == Screen.Chat && currentRoute in chatSubScreens) {
+                            true  // Highlight Chat tab when on Files/Audit
+                        } else {
+                            currentDestination?.hierarchy?.any { it.route == screen.route } == true
+                        }
 
                         NavigationBarItem(
                             icon = {
@@ -154,12 +167,17 @@ fun VesperApp() {
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                             ),
                             onClick = {
+                                val activeRoute = navController.currentBackStackEntry?.destination?.route
+                                // If already on this tab, do nothing
+                                if (activeRoute == screen.route) return@NavigationBarItem
                                 navController.navigate(screen.route) {
                                     popUpTo(navController.graph.findStartDestination().id) {
                                         saveState = true
                                     }
                                     launchSingleTop = true
-                                    restoreState = true
+                                    // Only restore state when switching between bottom-nav tabs,
+                                    // not when returning from sub-screens (Files, Audit)
+                                    restoreState = activeRoute in screens.map { it.route }
                                 }
                             }
                         )
