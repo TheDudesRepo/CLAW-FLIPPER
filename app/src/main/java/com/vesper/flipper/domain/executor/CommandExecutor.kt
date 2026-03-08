@@ -1130,7 +1130,6 @@ class CommandExecutor @Inject constructor(
      * don't already mention it, to keep results relevant.
      */
     private suspend fun executeGitHubSearch(query: String, scope: String): CommandResultData {
-        val validScopes = setOf("repositories", "code", "repos")
         val resolvedScope = when (scope) {
             "repos", "repositories", "repo" -> "repositories"
             "code", "files", "file" -> "code"

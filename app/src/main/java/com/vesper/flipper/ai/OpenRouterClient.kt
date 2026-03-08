@@ -727,6 +727,24 @@ class OpenRouterClient @Inject constructor(
                 }
             }
             CommandAction.SEARCH_RESOURCES -> emptyList()  // query and resource_type are optional
+            CommandAction.BROWSE_REPO -> {
+                if (args.repoId.isNullOrBlank() && args.command.isNullOrBlank()) {
+                    listOf("repo_id")
+                } else {
+                    emptyList()
+                }
+            }
+            CommandAction.DOWNLOAD_RESOURCE -> listOfNotNull(
+                if (args.downloadUrl.isNullOrBlank()) "download_url" else null,
+                if (args.path.isNullOrBlank()) "path" else null
+            )
+            CommandAction.GITHUB_SEARCH -> {
+                if (args.command.isNullOrBlank()) {
+                    listOf("command")
+                } else {
+                    emptyList()
+                }
+            }
             CommandAction.LIST_VAULT -> emptyList()  // filter is optional
             CommandAction.RUN_RUNBOOK -> {
                 if (args.runbookId.isNullOrBlank() && args.command.isNullOrBlank()) {
@@ -808,6 +826,12 @@ class OpenRouterClient @Inject constructor(
                 """{"action":"led_control","args":{"red":255,"green":0,"blue":0}}"""
             CommandAction.VIBRO_CONTROL ->
                 """{"action":"vibro_control","args":{"enabled":true}}"""
+            CommandAction.BROWSE_REPO ->
+                """{"action":"browse_repo","args":{"repo_id":"irdb","sub_path":"TVs/Samsung"}}"""
+            CommandAction.DOWNLOAD_RESOURCE ->
+                """{"action":"download_resource","args":{"download_url":"https://raw.githubusercontent.com/...","path":"/ext/infrared/remote.ir"}}"""
+            CommandAction.GITHUB_SEARCH ->
+                """{"action":"github_search","args":{"command":"Samsung TV remote extension:ir","search_scope":"code"}}"""
         }
     }
 
