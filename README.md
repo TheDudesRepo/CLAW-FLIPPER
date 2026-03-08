@@ -169,6 +169,15 @@ Manage your Flipper connection:
 - Storage info
 - Connection controls
 
+### Risk & Permissions
+All AI actions are classified by risk before execution:
+- **Low**: Read-only operations execute automatically
+- **Medium**: File writes show a diff for review before applying
+- **High**: Destructive ops (delete, move, overwrite) require double-tap confirmation
+- **Blocked**: System/firmware paths require explicit unlock in settings
+
+You can configure **auto-approve** per tier in Settings → Permissions to skip confirmation dialogs for medium and/or high risk actions.
+
 ---
 
 ## Troubleshooting for Beginners
@@ -195,9 +204,12 @@ Manage your Flipper connection:
 3. Check your internet connection
 
 ### "Permission denied" errors
-- Some Flipper paths are protected
-- Go to Settings in the app to unlock them
-- System files can't be modified (this is intentional)
+- Some Flipper paths are protected (system files, firmware areas)
+- Go to Settings → Permissions to unlock specific protected paths
+- You can enable **auto-approve** per risk tier in Settings → Permissions:
+  - **Medium risk**: Auto-approve file writes within project scope (skips diff review)
+  - **High risk**: Auto-approve destructive actions like deletes and moves (skips confirmation)
+- Blocked paths (system/firmware) always require manual unlock regardless of auto-approve settings
 
 ---
 

@@ -116,6 +116,30 @@ class SettingsStore @Inject constructor(
         }
     }
 
+    // Auto-approve by risk tier
+    private val AUTO_APPROVE_MEDIUM = booleanPreferencesKey("auto_approve_medium")
+    private val AUTO_APPROVE_HIGH = booleanPreferencesKey("auto_approve_high")
+
+    val autoApproveMedium: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[AUTO_APPROVE_MEDIUM] ?: false
+    }
+
+    suspend fun setAutoApproveMedium(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[AUTO_APPROVE_MEDIUM] = enabled
+        }
+    }
+
+    val autoApproveHigh: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[AUTO_APPROVE_HIGH] ?: false
+    }
+
+    suspend fun setAutoApproveHigh(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[AUTO_APPROVE_HIGH] = enabled
+        }
+    }
+
     // Haptic feedback
     private val HAPTIC_FEEDBACK = booleanPreferencesKey("haptic_feedback")
 

@@ -1,6 +1,7 @@
 package com.vesper.flipper.domain.executor
 
 import com.vesper.flipper.ble.FlipperFileSystem
+import com.vesper.flipper.data.SettingsStore
 import com.vesper.flipper.domain.model.*
 import com.vesper.flipper.domain.service.AuditService
 import com.vesper.flipper.domain.service.DiffService
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -33,7 +35,8 @@ class CommandExecutor @Inject constructor(
     private val permissionService: PermissionService,
     private val auditService: AuditService,
     private val diffService: DiffService,
-    private val forgeEngine: ForgeEngine
+    private val forgeEngine: ForgeEngine,
+    private val settingsStore: SettingsStore
 ) {
 
     private val pendingApprovals = ConcurrentHashMap<String, PendingApproval>()
@@ -73,8 +76,8 @@ class CommandExecutor @Inject constructor(
             )
 
             RiskLevel.MEDIUM -> {
-                // Medium-risk operations can still require explicit user confirmation.
-                if (riskAssessment.requiresDiff || riskAssessment.requiresConfirmation) {
+                val autoApprove = settingsStore.autoApproveMedium.first()
+                if (!autoApprove && (riskAssessment.requiresDiff || riskAssessment.requiresConfirmation)) {
                     requestApproval(
                         command = command,
                         riskAssessment = riskAssessment,
@@ -93,13 +96,26 @@ class CommandExecutor @Inject constructor(
                 }
             }
 
-            RiskLevel.HIGH -> requestApproval(
-                command = command,
-                riskAssessment = riskAssessment,
-                sessionId = sessionId,
-                startTime = startTime,
-                traceId = traceId
-            )
+            RiskLevel.HIGH -> {
+                val autoApprove = settingsStore.autoApproveHigh.first()
+                if (autoApprove) {
+                    executeDirectly(
+                        command = command,
+                        sessionId = sessionId,
+                        startTime = startTime,
+                        riskLevel = riskAssessment.level,
+                        traceId = traceId
+                    )
+                } else {
+                    requestApproval(
+                        command = command,
+                        riskAssessment = riskAssessment,
+                        sessionId = sessionId,
+                        startTime = startTime,
+                        traceId = traceId
+                    )
+                }
+            }
 
             RiskLevel.BLOCKED -> {
                 auditService.log(

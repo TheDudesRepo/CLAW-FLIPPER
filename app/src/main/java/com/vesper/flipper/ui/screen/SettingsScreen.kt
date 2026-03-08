@@ -289,6 +289,63 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Grant Project Scope")
                     }
+
+                    Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    Text(
+                        text = "Auto-Approve",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Skip the approval dialog for these risk tiers. Blocked paths always require a settings unlock.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    SettingsSwitch(
+                        title = "Medium risk",
+                        subtitle = "File writes within project scope",
+                        checked = state.autoApproveMedium,
+                        onCheckedChange = { viewModel.setAutoApproveMedium(it) }
+                    )
+
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    SettingsSwitch(
+                        title = "High risk",
+                        subtitle = "Deletes, moves, overwrites, mass ops",
+                        checked = state.autoApproveHigh,
+                        onCheckedChange = { viewModel.setAutoApproveHigh(it) }
+                    )
+                    if (state.autoApproveHigh) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = RiskHigh.copy(alpha = 0.15f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = RiskHigh,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Destructive actions will execute without confirmation.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = RiskHigh
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

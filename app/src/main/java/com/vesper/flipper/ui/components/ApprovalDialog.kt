@@ -219,7 +219,7 @@ fun ApprovalDialog(
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Apply Changes")
+                        Text("Approve")
                     }
                 }
 

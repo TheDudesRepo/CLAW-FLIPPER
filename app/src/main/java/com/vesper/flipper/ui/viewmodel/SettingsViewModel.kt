@@ -22,6 +22,8 @@ data class SettingsState(
     val permissionDuration: Long = Permission.DURATION_15_MINUTES,
     val hapticFeedback: Boolean = true,
     val darkMode: Boolean = true,
+    val autoApproveMedium: Boolean = false,
+    val autoApproveHigh: Boolean = false,
     val auditRetentionDays: Int = 30,
     val activePermissions: List<Permission> = emptyList()
 )
@@ -72,6 +74,13 @@ class SettingsViewModel @Inject constructor(
                     darkMode = values[7] as Boolean,
                     auditRetentionDays = values[8] as Int
                 )
+            }.combine(
+                combine(
+                    settingsStore.autoApproveMedium,
+                    settingsStore.autoApproveHigh
+                ) { medium, high -> medium to high }
+            ) { base, (medium, high) ->
+                base.copy(autoApproveMedium = medium, autoApproveHigh = high)
             }.collect { settings ->
                 _state.update { it.copy(
                     apiKey = settings.apiKey,
@@ -80,6 +89,8 @@ class SettingsViewModel @Inject constructor(
                     autoConnect = settings.autoConnect,
                     defaultProjectPath = settings.defaultProjectPath,
                     permissionDuration = settings.permissionDuration,
+                    autoApproveMedium = settings.autoApproveMedium,
+                    autoApproveHigh = settings.autoApproveHigh,
                     hapticFeedback = settings.hapticFeedback,
                     darkMode = settings.darkMode,
                     auditRetentionDays = settings.auditRetentionDays
@@ -159,6 +170,20 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsStore.setPermissionDuration(durationMs)
             _state.update { it.copy(permissionDuration = durationMs) }
+        }
+    }
+
+    fun setAutoApproveMedium(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setAutoApproveMedium(enabled)
+            _state.update { it.copy(autoApproveMedium = enabled) }
+        }
+    }
+
+    fun setAutoApproveHigh(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setAutoApproveHigh(enabled)
+            _state.update { it.copy(autoApproveHigh = enabled) }
         }
     }
 

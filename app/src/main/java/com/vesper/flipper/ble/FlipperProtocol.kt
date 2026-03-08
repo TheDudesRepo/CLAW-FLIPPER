@@ -625,6 +625,16 @@ class FlipperProtocol @Inject constructor() {
             return null
         }
 
+        // Small files: send in a single message (original behavior).
+        if (content.size <= WRITE_CHUNK_SIZE) {
+            return sendRpcWriteSingleLocked(path, content)
+        }
+
+        // Large files: stream in chunks to avoid overwhelming Flipper's RPC buffer.
+        return sendRpcWriteChunkedLocked(path, content)
+    }
+
+    private suspend fun sendRpcWriteSingleLocked(path: String, content: ByteArray): ProtocolResponse? {
         val fileMessage = PBStorage.File.newBuilder()
             .setType(PBStorage.File.FileType.FILE)
             .setName(path.substringAfterLast('/'))
@@ -667,6 +677,99 @@ class FlipperProtocol @Inject constructor() {
         }
 
         return lastFailure ?: ProtocolResponse.Error("RPC storage write failed: $path")
+    }
+
+    /**
+     * Stream a large file to Flipper in WRITE_CHUNK_SIZE chunks using the
+     * RPC streaming protocol (hasNext=true on all packets except the last).
+     * This prevents the Flipper's RPC buffer from overflowing and hanging
+     * the device with the hourglass animation.
+     */
+    private suspend fun sendRpcWriteChunkedLocked(path: String, content: ByteArray): ProtocolResponse? {
+        val commandId = nextRpcProbeCommandId()
+        val totalChunks = (content.size + WRITE_CHUNK_SIZE - 1) / WRITE_CHUNK_SIZE
+        val service = bleService ?: return ProtocolResponse.Error("BLE not connected")
+        val timeoutMs = resolveRpcStorageWriteTimeoutMs(content.size)
+        var lastFailure: ProtocolResponse? = null
+
+        repeat(RPC_STORAGE_WRITE_MAX_ATTEMPTS) { attempt ->
+            var sendFailed = false
+
+            for (chunkIndex in 0 until totalChunks) {
+                val offset = chunkIndex * WRITE_CHUNK_SIZE
+                val end = minOf(offset + WRITE_CHUNK_SIZE, content.size)
+                val chunkData = content.copyOfRange(offset, end)
+                val isLast = chunkIndex == totalChunks - 1
+
+                val fileMessage = PBStorage.File.newBuilder()
+                    .setType(PBStorage.File.FileType.FILE)
+                    .setName(path.substringAfterLast('/'))
+                    .setSize(chunkData.size)
+                    .setData(ByteString.copyFrom(chunkData))
+                    .build()
+
+                val writeRequest = PBStorage.WriteRequest.newBuilder()
+                    .setPath(path)
+                    .setFile(fileMessage)
+                    .build()
+
+                if (isLast) {
+                    // Final chunk: send and collect the response using the same commandId.
+                    val finalPacket = buildRpcMainPacket(commandId) {
+                        setStorageWriteRequest(writeRequest)
+                    }
+                    val responseBytes = collectRawBinaryResponseAttempt(finalPacket, timeoutMs)
+                    val responses = if (responseBytes.isNotEmpty()) {
+                        findRpcMainMessages(responseBytes, commandId)
+                    } else {
+                        emptyList()
+                    }
+                    if (responses.isEmpty()) {
+                        lastFailure = ProtocolResponse.Error("No RPC response for storage write (chunked): $path")
+                    } else {
+                        val status = responses
+                            .firstOrNull { it.commandStatus != Flipper.CommandStatus.OK }
+                            ?.commandStatus
+                        if (status == null || status == Flipper.CommandStatus.OK) {
+                            return ProtocolResponse.Success("RPC storage write executed (chunked, $totalChunks chunks): $path")
+                        }
+                        if (shouldFallbackToLegacy(status)) {
+                            return null
+                        }
+                        lastFailure = ProtocolResponse.Error("RPC storage write failed: ${status.name}", status.number)
+                        if (!isRetryableStorageWriteStatus(status)) {
+                            return lastFailure
+                        }
+                    }
+                } else {
+                    // Intermediate chunk: fire-and-forget with hasNext=true.
+                    val packet = buildRpcMainPacket(commandId) {
+                        setHasNext(true)
+                        setStorageWriteRequest(writeRequest)
+                    }
+                    val sent = service.sendData(packet)
+                    if (!sent) {
+                        lastFailure = ProtocolResponse.Error("BLE send failed during chunked write at chunk ${chunkIndex + 1}/$totalChunks: $path")
+                        sendFailed = true
+                        break
+                    }
+                    // Brief pause between chunks to let Flipper process and avoid buffer overflow.
+                    delay(WRITE_CHUNK_DELAY_MS)
+                }
+            }
+
+            if (sendFailed && attempt < RPC_STORAGE_WRITE_MAX_ATTEMPTS - 1) {
+                delay(RPC_STORAGE_WRITE_RETRY_DELAY_MS * (attempt + 1))
+                continue
+            }
+            if (!sendFailed) {
+                // If we got here without sendFailed, the final chunk's response was handled above
+                // and we either returned success or set lastFailure. Break out of retry loop.
+                break
+            }
+        }
+
+        return lastFailure ?: ProtocolResponse.Error("RPC storage write failed (chunked): $path")
     }
 
     private suspend fun sendRpcCreateDirectoryLocked(path: String): ProtocolResponse? {
@@ -1203,6 +1306,8 @@ class FlipperProtocol @Inject constructor() {
         private const val RPC_STORAGE_WRITE_TIMEOUT_MS = 120_000L
         private const val RPC_STORAGE_WRITE_MAX_ATTEMPTS = 3
         private const val RPC_STORAGE_WRITE_RETRY_DELAY_MS = 300L
+        private const val WRITE_CHUNK_SIZE = 512
+        private const val WRITE_CHUNK_DELAY_MS = 8L
         private const val RPC_CONTINUATION_COLLECT_WINDOW_MS = 900L
         private const val RPC_REMOTE_INPUT_ACK_TIMEOUT_MS = 900L
         private const val RPC_REMOTE_RELEASE_TIMEOUT_MS = 1_100L
