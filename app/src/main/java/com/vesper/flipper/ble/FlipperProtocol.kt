@@ -760,12 +760,12 @@ class FlipperProtocol @Inject constructor() {
 
             if (sendFailed && attempt < RPC_STORAGE_WRITE_MAX_ATTEMPTS - 1) {
                 delay(RPC_STORAGE_WRITE_RETRY_DELAY_MS * (attempt + 1))
-                continue
+                return@repeat // retry next attempt
             }
             if (!sendFailed) {
                 // If we got here without sendFailed, the final chunk's response was handled above
-                // and we either returned success or set lastFailure. Break out of retry loop.
-                break
+                // and we either returned success or set lastFailure. Stop retrying.
+                return@repeat
             }
         }
 
