@@ -185,15 +185,30 @@ class OpenRouterClient @Inject constructor(
             if (msg.imageAttachments.isNullOrEmpty()) return@map msg
 
             // Process all images in parallel for faster response
-            val descriptions = msg.imageAttachments.map { attachment ->
+            val results = msg.imageAttachments.map { attachment ->
                 async { describeImage(apiKey, attachment) }
-            }.awaitAll().filterNotNull()
+            }.awaitAll()
+            val descriptions = results.filterNotNull()
+            val failedCount = results.size - descriptions.size
 
-            if (descriptions.isEmpty()) return@map msg.copy(imageAttachments = null)
-
-            val imageContext = descriptions.joinToString("\n") { desc ->
-                "[Attached image: $desc]"
+            if (descriptions.isEmpty()) {
+                // All image descriptions failed — let the model know images were attached
+                val failNote = "[${msg.imageAttachments.size} image(s) were attached but could not be analyzed. " +
+                    "Ask the user to try again or describe what they see.]"
+                val fallbackContent = if (msg.content.isNotBlank()) {
+                    "$failNote\n\n${msg.content}"
+                } else {
+                    failNote
+                }
+                return@map msg.copy(content = fallbackContent, imageAttachments = null)
             }
+
+            val imageContext = buildString {
+                descriptions.forEach { desc -> appendLine("[Attached image: $desc]") }
+                if (failedCount > 0) {
+                    appendLine("[$failedCount additional image(s) could not be analyzed]")
+                }
+            }.trim()
             val updatedContent = if (msg.content.isNotBlank()) {
                 "$imageContext\n\n${msg.content}"
             } else {

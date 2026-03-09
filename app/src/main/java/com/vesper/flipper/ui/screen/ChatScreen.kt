@@ -522,9 +522,11 @@ private fun ChatMessageItem(message: ChatMessage) {
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             message.imageAttachments.forEach { attachment ->
+                                val attachData: Any = attachment.localUri
+                                    ?: android.util.Base64.decode(attachment.base64Data, android.util.Base64.NO_WRAP)
                                 AsyncImage(
                                     model = ImageRequest.Builder(context)
-                                        .data(attachment.localUri)
+                                        .data(attachData)
                                         .crossfade(true)
                                         .build(),
                                     contentDescription = "Attached image",
@@ -1024,9 +1026,12 @@ private fun ImagePreviewChip(
     Box(
         modifier = Modifier.size(64.dp)
     ) {
+        // Use localUri if available (current session), otherwise decode base64 (restored session)
+        val imageData: Any = image.localUri
+            ?: android.util.Base64.decode(image.base64Data, android.util.Base64.NO_WRAP)
         AsyncImage(
             model = ImageRequest.Builder(context)
-                .data(image.localUri)
+                .data(imageData)
                 .crossfade(true)
                 .build(),
             contentDescription = "Attached image",
@@ -1212,6 +1217,10 @@ private fun ChatHistorySheet(
  */
 private fun createCameraCaptureUri(context: android.content.Context, video: Boolean = false): Uri {
     val cacheDir = java.io.File(context.cacheDir, "camera").also { it.mkdirs() }
+    // Clean up old capture files (> 1 hour) to prevent cache bloat
+    val cutoff = System.currentTimeMillis() - 3_600_000L
+    cacheDir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+
     val ext = if (video) "mp4" else "jpg"
     val file = java.io.File(cacheDir, "capture_${System.currentTimeMillis()}.$ext")
     return androidx.core.content.FileProvider.getUriForFile(
