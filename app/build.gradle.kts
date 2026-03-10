@@ -56,8 +56,6 @@ android {
         debug {
             // Debug builds: no minification, fast iteration
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
         }
         release {
             isMinifyEnabled = true
