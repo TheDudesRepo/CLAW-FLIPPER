@@ -4,9 +4,9 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
+    id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.kotlin.plugin.compose")
-    kotlin("kapt")
 }
 
 // Load signing properties from local.properties (not checked into git)
@@ -117,13 +117,13 @@ dependencies {
 
     // Hilt DI
     implementation("com.google.dagger:hilt-android:2.59.2")
-    kapt("com.google.dagger:hilt-android-compiler:2.59.2")
+    ksp("com.google.dagger:hilt-android-compiler:2.59.2")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
     // Room Database
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")
-    kapt("androidx.room:room-compiler:2.7.2")
+    ksp("androidx.room:room-compiler:2.7.2")
 
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
@@ -155,8 +155,4 @@ dependencies {
 
     // Diff utils
     implementation("io.github.java-diff-utils:java-diff-utils:4.12")
-}
-
-kapt {
-    correctErrorTypes = true
 }
