@@ -209,6 +209,22 @@ async function startMentraIntegration() {
           durationMs: 3000,
         });
 
+        // ── Wake word state ─────────────────────────────────────
+        // "Hey Vesper" activates the agent. Two modes:
+        //   1. "Hey Vesper, <command>" — immediate execution
+        //   2. "Hey Vesper" alone — arms for the next utterance
+        let awaitingCommand = false;
+        let awaitingTimer: ReturnType<typeof setTimeout> | null = null;
+        const WAKE_TIMEOUT_MS = 15_000; // 15s to say follow-up command
+
+        function resetAwaitingState() {
+          awaitingCommand = false;
+          if (awaitingTimer) {
+            clearTimeout(awaitingTimer);
+            awaitingTimer = null;
+          }
+        }
+
         // ── Voice → V3SP3R ────────────────────────────────────────
         session.events.onTranscription(
           (data: {
@@ -218,10 +234,99 @@ async function startMentraIntegration() {
           }) => {
             if (!data.isFinal || !data.text.trim()) return;
 
-            console.log(`[MentraOS] Voice: "${data.text}"`);
+            const rawText = data.text.trim();
+            const lowerText = rawText.toLowerCase();
+
+            // ── Wake word detection ──────────────────────────────
+            const wakePatterns = [
+              /^hey\s+vesper[\s,.:!]*(.*)$/i,
+              /^vesper[\s,.:!]*(.*)$/i,
+            ];
+
+            let command: string | null = null;
+            let isWakeTriggered = false;
+
+            for (const pattern of wakePatterns) {
+              const match = rawText.match(pattern);
+              if (match) {
+                isWakeTriggered = true;
+                command = match[1]?.trim() || null;
+                break;
+              }
+            }
+
+            if (isWakeTriggered) {
+              if (command && command.length > 0) {
+                // "Hey Vesper, scan this" — immediate command
+                console.log(`[MentraOS] Wake + command: "${command}"`);
+                resetAwaitingState();
+
+                broadcast(getVesperClients(), {
+                  type: "VOICE_COMMAND",
+                  text: command,
+                  metadata: {
+                    source: "mentra",
+                    sessionId,
+                    language: data.transcribeLanguage || "en",
+                    wake_word: "true",
+                  },
+                });
+
+                // Check for vision triggers
+                checkVisionTrigger(session, command);
+              } else {
+                // "Hey Vesper" alone — arm for next utterance
+                console.log(`[MentraOS] Wake word detected — awaiting command`);
+                resetAwaitingState();
+                awaitingCommand = true;
+                awaitingTimer = setTimeout(() => {
+                  console.log(`[MentraOS] Wake word timed out`);
+                  awaitingCommand = false;
+                  awaitingTimer = null;
+                  session.layouts
+                    .showTextWall("Vesper: timed out", { durationMs: 2000 })
+                    .catch(() => {});
+                }, WAKE_TIMEOUT_MS);
+
+                session.layouts
+                  .showTextWall("Vesper: listening...", { durationMs: 3000 })
+                  .catch(() => {});
+
+                broadcast(getVesperClients(), {
+                  type: "STATUS_UPDATE",
+                  text: "Vesper listening...",
+                  metadata: { source: "mentra", wake_word: "true" },
+                });
+              }
+              return;
+            }
+
+            // ── Armed follow-up: treat this as the command ───────
+            if (awaitingCommand) {
+              console.log(`[MentraOS] Follow-up command: "${rawText}"`);
+              resetAwaitingState();
+
+              broadcast(getVesperClients(), {
+                type: "VOICE_COMMAND",
+                text: rawText,
+                metadata: {
+                  source: "mentra",
+                  sessionId,
+                  language: data.transcribeLanguage || "en",
+                  wake_word: "true",
+                },
+              });
+
+              checkVisionTrigger(session, rawText);
+              return;
+            }
+
+            // ── No wake word, not armed — relay as passive transcription ──
+            // (only sent if auto-send is on in the Android app)
+            console.log(`[MentraOS] Voice (passive): "${rawText}"`);
             broadcast(getVesperClients(), {
               type: "VOICE_TRANSCRIPTION",
-              text: data.text.trim(),
+              text: rawText,
               isFinal: true,
               metadata: {
                 source: "mentra",
@@ -229,20 +334,6 @@ async function startMentraIntegration() {
                 language: data.transcribeLanguage || "en",
               },
             });
-
-            // Vision trigger: detect "what am I looking at" style commands
-            const visionTriggers = [
-              "what am i looking at",
-              "what do you see",
-              "what is this",
-              "analyze this",
-              "scan this",
-              "identify this",
-            ];
-            const lowerText = data.text.toLowerCase().trim();
-            if (visionTriggers.some((t) => lowerText.includes(t))) {
-              captureAndAnalyze(session, data.text);
-            }
           }
         );
 
@@ -321,6 +412,26 @@ async function startMentraIntegration() {
     );
     console.warn(`  Install with: npm install @mentra/sdk`);
     console.warn(`  Error: ${(e as Error).message}`);
+  }
+}
+
+/** Check if text contains a vision trigger and capture if so. */
+function checkVisionTrigger(session: any, text: string) {
+  const visionTriggers = [
+    "what am i looking at",
+    "what do you see",
+    "what is this",
+    "analyze this",
+    "scan this",
+    "identify this",
+    "take a photo",
+    "take a picture",
+    "capture this",
+    "screenshot",
+  ];
+  const lower = text.toLowerCase();
+  if (visionTriggers.some((t) => lower.includes(t))) {
+    captureAndAnalyze(session, text);
   }
 }
 

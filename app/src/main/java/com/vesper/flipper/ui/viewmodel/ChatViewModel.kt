@@ -142,6 +142,18 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
+
+        // Auto-add glasses photos to pending images so they appear in chat input
+        viewModelScope.launch {
+            glassesIntegration.pendingGlassesPhoto.collect { photo ->
+                if (photo != null && _pendingImages.value.size < MAX_PENDING_IMAGES) {
+                    // Add to pending images if not already there
+                    if (_pendingImages.value.none { it.id == photo.id }) {
+                        _pendingImages.value = _pendingImages.value + photo
+                    }
+                }
+            }
+        }
     }
 
     companion object {
@@ -440,6 +452,7 @@ class ChatViewModel @Inject constructor(
 
         _inputText.value = ""
         _pendingImages.value = emptyList()
+        glassesIntegration.clearPendingPhoto() // Clear glasses hold timer
 
         viewModelScope.launch {
             vesperAgent.sendMessage(
