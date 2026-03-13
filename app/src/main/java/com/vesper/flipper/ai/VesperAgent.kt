@@ -33,7 +33,7 @@ fun interface PhotoCaptureCallback {
      * @param timeoutMs Max time to wait for the glasses to return a photo
      * @return Text description of the photo, or null if capture failed
      */
-    suspend fun capturePhoto(prompt: String, timeoutMs: Long = 15_000L): String?
+    suspend fun capturePhoto(prompt: String, timeoutMs: Long): String?
 }
 
 /**
@@ -396,7 +396,7 @@ class VesperAgent @Inject constructor(
                                         detail = "Capturing photo from glasses..."
                                     )
                                 )
-                                val description = callback.capturePhoto(photoPrompt)
+                                val description = callback.capturePhoto(photoPrompt, 15_000L)
                                 if (description != null) {
                                     toolResults.add(
                                         ChatToolResult(
