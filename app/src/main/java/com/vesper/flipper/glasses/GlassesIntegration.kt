@@ -87,10 +87,21 @@ class GlassesIntegration @Inject constructor(
     private fun startListeners() {
         stopListeners()
 
-        // Listen for messages FROM glasses (voice, photos)
+        // Listen for messages FROM glasses (voice, photos).
+        // Each message is handled in its own coroutine so a failure in one
+        // (e.g. network error during sendMessage) doesn't kill the collector.
         messageListenerJob = scope.launch {
             bridge.incomingMessages.collect { message ->
-                handleGlassesMessage(message)
+                scope.launch {
+                    try {
+                        handleGlassesMessage(message)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error handling glasses message: ${e.message}", e)
+                        bridge.sendStatus("Error: ${e.message?.take(60) ?: "unknown"}")
+                    }
+                }
             }
         }
 
@@ -319,8 +330,10 @@ class GlassesIntegration @Inject constructor(
         if (!bridge.isConnected()) return
 
         val messages = state.messages
-        if (messages.size <= lastProcessedMessageCount || state.isLoading) {
-            lastProcessedMessageCount = messages.size
+
+        // While loading, don't update the count — we need to see the final
+        // response once loading finishes
+        if (state.isLoading || messages.size <= lastProcessedMessageCount) {
             return
         }
 
