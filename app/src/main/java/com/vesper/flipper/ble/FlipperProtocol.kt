@@ -3624,6 +3624,8 @@ class FlipperProtocol @Inject constructor() {
                 "CLI is available. RPC app bridge is unavailable on this session."
             FirmwareTransportMode.RPC_ONLY ->
                 "RPC-only transport detected. Use mapped app-control commands for reliable execution."
+            FirmwareTransportMode.PROBING ->
+                "Transport capability is being probed. Commands may be queued."
             FirmwareTransportMode.UNAVAILABLE ->
                 "No automation transport is currently available."
         }
