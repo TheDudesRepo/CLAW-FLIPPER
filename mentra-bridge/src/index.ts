@@ -426,7 +426,7 @@ async function startMentraIntegration() {
 
                 broadcast(getVesperClients(), {
                   type: "VOICE_COMMAND",
-                  text: command,
+                  text: command!,
                   metadata: {
                     source: "mentra",
                     sessionId,
@@ -436,7 +436,7 @@ async function startMentraIntegration() {
                 });
 
                 // Check for vision triggers
-                checkVisionTrigger(session, command);
+                checkVisionTrigger(session, command!);
               } else {
                 // "Hey Vesper" alone — arm for next utterance
                 console.log(`[MentraOS] Wake word detected — awaiting command`);
