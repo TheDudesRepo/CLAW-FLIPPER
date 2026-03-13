@@ -387,20 +387,25 @@ async function startMentraIntegration() {
         );
 
         // ── Camera events → V3SP3R ───────────────────────────────
-        session.events.onPhotoTaken(
-          (data: { photoData: ArrayBuffer }) => {
-            const imageBase64 = Buffer.from(data.photoData).toString("base64");
-            console.log(`[MentraOS] Photo captured: ${imageBase64.length} chars`);
+        try {
+          session.events.onPhotoTaken(
+            (data: { photoData: ArrayBuffer }) => {
+              const imageBase64 = Buffer.from(data.photoData).toString("base64");
+              console.log(`[MentraOS] Photo captured: ${imageBase64.length} chars base64`);
 
-            broadcast(getVesperClients(), {
-              type: "CAMERA_PHOTO",
-              text: "What am I looking at?",
-              imageBase64,
-              imageMimeType: "image/jpeg",
-              metadata: { source: "mentra", sessionId },
-            });
-          }
-        );
+              broadcast(getVesperClients(), {
+                type: "CAMERA_PHOTO",
+                text: "What am I looking at?",
+                imageBase64,
+                imageMimeType: "image/jpeg",
+                metadata: { source: "mentra", sessionId },
+              });
+            }
+          );
+          console.log(`[MentraOS] Photo listener registered`);
+        } catch (e) {
+          console.warn(`[MentraOS] Failed to register photo listener: ${(e as Error).message}`);
+        }
 
         // ── Session keepalive ────────────────────────────────────────
         // Periodically poke the session so MentraOS doesn't idle-kill the
@@ -493,11 +498,27 @@ async function captureAndAnalyze(session: any, prompt: string) {
       await session.layouts.showTextWall("Capturing...", { durationMs: 2000 });
     } catch { /* WebSocket may not be ready */ }
 
+    // Check if camera API is available
+    if (!session.camera || typeof session.camera.requestPhoto !== "function") {
+      console.error("[MentraOS] Camera API not available on this session");
+      try {
+        await session.layouts.showTextWall("Camera not available", { durationMs: 3000 });
+      } catch { /* ignore */ }
+      return;
+    }
+
+    console.log("[MentraOS] Requesting photo from glasses camera...");
     const photo = await session.camera.requestPhoto({
       metadata: { reason: "vesper-vision" },
     });
 
+    if (!photo || !photo.photoData) {
+      console.error("[MentraOS] Photo request returned empty data");
+      return;
+    }
+
     const imageBase64 = Buffer.from(photo.photoData).toString("base64");
+    console.log(`[MentraOS] Photo received: ${imageBase64.length} chars, mime: ${photo.mimeType || "image/jpeg"}`);
 
     broadcast(getVesperClients(), {
       type: "CAMERA_PHOTO",
@@ -511,7 +532,11 @@ async function captureAndAnalyze(session: any, prompt: string) {
       await session.layouts.showTextWall("Analyzing...", { durationMs: 3000 });
     } catch { /* WebSocket may not be ready */ }
   } catch (e) {
-    console.error("[MentraOS] Vision capture failed:", (e as Error).message);
+    const errMsg = (e as Error).message;
+    console.error("[MentraOS] Vision capture failed:", errMsg);
+    try {
+      await session.layouts.showTextWall(`Camera error: ${errMsg.slice(0, 40)}`, { durationMs: 3000 });
+    } catch { /* ignore */ }
   }
 }
 
