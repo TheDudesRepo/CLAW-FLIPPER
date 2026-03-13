@@ -26,7 +26,8 @@ interface GlassesMessage {
     | "CAMERA_PHOTO"
     | "VOICE_COMMAND"
     | "AI_RESPONSE"
-    | "STATUS_UPDATE";
+    | "STATUS_UPDATE"
+    | "CONFIG";
   text?: string;
   imageBase64?: string;
   imageMimeType?: string;
@@ -64,6 +65,106 @@ export function broadcast(targets: WebSocket[], message: GlassesMessage) {
       ws.send(payload);
     }
   }
+}
+
+// ==================== Sailor Mouth Mode ====================
+
+let sailorMouthEnabled = false;
+
+// Track session context so greetings feel natural
+let wakeCount = 0;
+let lastWakeTimestamp = 0;
+let lastTaskTimestamp = 0; // when we last forwarded a VOICE_COMMAND
+
+const IDLE_THRESHOLD_MS = 5 * 60 * 1000; // 5 min = "been a while"
+
+// ── Normal greetings (context-aware) ────────────────────────
+const GREETINGS_FIRST = [
+  "hey! what's up?",
+  "hi fren, what do you need?",
+  "hey there, I'm listening",
+];
+
+const GREETINGS_RETURN = [
+  "welcome back, what's next?",
+  "hey again! what do you need?",
+  "back at it, what's the move?",
+];
+
+const GREETINGS_ACTIVE = [
+  "yeah?",
+  "what's up?",
+  "listening",
+  "go ahead",
+  "I'm here",
+];
+
+const GREETINGS_WITH_COMMAND = [
+  "on it",
+  "got it",
+  "roger that",
+  "working on it",
+  "let me check",
+];
+
+// ── Sailor mouth greetings ──────────────────────────────────
+const SAILOR_FIRST = [
+  "sup bitch, what we hackin?",
+  "HACK THE PLANET, MOTHERFUCKER!",
+  "yo what's good, you beautiful degenerate",
+];
+
+const SAILOR_RETURN = [
+  "oh shit, you're back! what now?",
+  "bout damn time you called me",
+  "missed you, asshole. what's the play?",
+];
+
+const SAILOR_ACTIVE = [
+  "yeah bitch?",
+  "what now?",
+  "talk to me",
+  "spit it out",
+  "I'm all ears, fucker",
+];
+
+const SAILOR_WITH_COMMAND = [
+  "on it, you crazy bastard",
+  "fuck yeah, let's go",
+  "hell yeah, hold my beer",
+  "let's break some shit",
+  "ready to fuck shit up, captain",
+  "at your service, you glorious bastard",
+  "what's crackin, you magnificent asshole",
+  "let's go, you crazy son of a bitch",
+];
+
+function pick(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function getWakeGreeting(hasCommand: boolean): string {
+  const now = Date.now();
+  const timeSinceLastWake = now - lastWakeTimestamp;
+  const isFirstWake = wakeCount === 0;
+  const isReturning = timeSinceLastWake > IDLE_THRESHOLD_MS;
+  // "Active" = last task was recent, user is in the middle of a workflow
+  const isActive = (now - lastTaskTimestamp) < IDLE_THRESHOLD_MS && !isFirstWake;
+
+  wakeCount++;
+  lastWakeTimestamp = now;
+
+  if (hasCommand) {
+    return pick(sailorMouthEnabled ? SAILOR_WITH_COMMAND : GREETINGS_WITH_COMMAND);
+  }
+  if (isFirstWake) {
+    return pick(sailorMouthEnabled ? SAILOR_FIRST : GREETINGS_FIRST);
+  }
+  if (isReturning) {
+    return pick(sailorMouthEnabled ? SAILOR_RETURN : GREETINGS_RETURN);
+  }
+  // Mid-session, keep it short
+  return pick(sailorMouthEnabled ? SAILOR_ACTIVE : GREETINGS_ACTIVE);
 }
 
 // ==================== WebSocket Relay Server ====================
@@ -166,6 +267,15 @@ function handleMessage(sender: WebSocket, message: GlassesMessage) {
         console.log("Client identified as vesper");
       }
       broadcast(getGlassesClients(), message);
+      break;
+
+    case "CONFIG":
+      if (message.metadata) {
+        if ("sailor_mouth" in message.metadata) {
+          sailorMouthEnabled = message.metadata.sailor_mouth === "true";
+          console.log(`[Config] Sailor mouth: ${sailorMouthEnabled}`);
+        }
+      }
       break;
   }
 }
@@ -297,18 +407,21 @@ async function startMentraIntegration() {
             }
 
             if (isWakeTriggered) {
+              const hasCommand = !!(command && command.length > 0);
+
               // Greet on wake — cancel any in-flight speech first
               try { await session.audio.stop(); } catch { /* no-op */ }
               session.audio
-                .speak("hi fren", {
+                .speak(getWakeGreeting(hasCommand), {
                   language: "en-GB",
                   voice: "en-GB-Wavenet-F",
                 })
                 .catch(() => {});
 
-              if (command && command.length > 0) {
+              if (hasCommand) {
                 // "Hey Vesper, scan this" — immediate command
                 console.log(`[MentraOS] Wake + command: "${command}"`);
+                lastTaskTimestamp = Date.now();
                 resetAwaitingState();
 
                 broadcast(getVesperClients(), {
@@ -362,6 +475,7 @@ async function startMentraIntegration() {
             // ── Armed follow-up: treat this as the command ───────
             if (awaitingCommand) {
               console.log(`[MentraOS] Follow-up command: "${rawText}"`);
+              lastTaskTimestamp = Date.now();
               resetAwaitingState();
 
               broadcast(getVesperClients(), {
@@ -575,6 +689,15 @@ async function handleMentraResponse(session: any, message: GlassesMessage) {
           await session.layouts.showTextWall(message.text, {
             durationMs: 5000,
           });
+          // Speak short status updates so user gets audio feedback
+          // (e.g. "Thinking...", "Executing read_file"). Skip long ones.
+          if (message.text.length <= 50) {
+            try { await session.audio.stop(); } catch { /* no-op */ }
+            await session.audio.speak(message.text, {
+              language: "en-GB",
+              voice: "en-GB-Wavenet-F",
+            });
+          }
         }
         break;
     }

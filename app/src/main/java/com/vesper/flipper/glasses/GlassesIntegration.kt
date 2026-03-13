@@ -50,6 +50,17 @@ class GlassesIntegration @Inject constructor(
             "If the message is a factual answer, give just the fact. " +
             "Never say \"here is a summary\" or \"in short\" — just speak the answer."
 
+        private const val SAILOR_SPEECH_SUMMARY_PROMPT =
+            "You are Vesper, a foul-mouthed hacker voice assistant on smart glasses. " +
+            "Compress the user's message into a single spoken sentence. " +
+            "Be vulgar, funny, and irreverent — swear freely, drop f-bombs, " +
+            "use hacker slang. You're a chaotic good pirate of cyberspace. " +
+            "Max 20 words. No markdown, no lists, no code. " +
+            "Capture the core answer but make it funny and profane. " +
+            "If something worked, celebrate like a maniac. " +
+            "If something failed, roast it mercilessly. " +
+            "Never be boring. Never be polite."
+
         // Voice patterns for approving/denying Flipper operations hands-free.
         // Use word-boundary regex to avoid false positives like "yesterday" → "yes".
         private val APPROVE_REGEX = Regex(
@@ -74,6 +85,7 @@ class GlassesIntegration @Inject constructor(
     private var responseListenerJob: Job? = null
     private var progressListenerJob: Job? = null
     private var approvalListenerJob: Job? = null
+    private var configSyncJob: Job? = null
     private var lastProcessedMessageCount = 0
     private var photoHoldJob: Job? = null
 
@@ -83,6 +95,7 @@ class GlassesIntegration @Inject constructor(
     private var pendingApprovalId: String? = null
 
     private var lastSpokenProgressStage: AgentProgressStage? = null
+    private var lastSpokenProgressDetail: String? = null
 
     /**
      * Connect to the glasses bridge and start relaying messages.
@@ -103,6 +116,7 @@ class GlassesIntegration @Inject constructor(
         photoHoldJob?.cancel()
         photoHoldJob = null
         lastSpokenProgressStage = null
+        lastSpokenProgressDetail = null
     }
 
     fun isConnected(): Boolean = bridge.isConnected()
@@ -160,6 +174,17 @@ class GlassesIntegration @Inject constructor(
                     }
                 }
         }
+
+        // Sync config (sailor mouth, etc.) to bridge on change
+        configSyncJob = scope.launch {
+            settingsStore.glassesSailorMouth
+                .distinctUntilChanged()
+                .collect { sailorMouth ->
+                    if (bridge.isConnected()) {
+                        bridge.sendConfig(mapOf("sailor_mouth" to sailorMouth.toString()))
+                    }
+                }
+        }
     }
 
     private fun stopListeners() {
@@ -171,6 +196,8 @@ class GlassesIntegration @Inject constructor(
         progressListenerJob = null
         approvalListenerJob?.cancel()
         approvalListenerJob = null
+        configSyncJob?.cancel()
+        configSyncJob = null
     }
 
     /**
@@ -234,10 +261,21 @@ class GlassesIntegration @Inject constructor(
         // Cancel any previous hold timer
         photoHoldJob?.cancel()
 
-        // Expose photo to UI as pending
+        // If the photo arrived with a prompt (e.g. voice-triggered "what am I
+        // looking at?"), send immediately — no reason to wait for a follow-up.
+        if (!promptText.isNullOrBlank()) {
+            Log.i(TAG, "Photo has prompt — sending immediately: \"$promptText\"")
+            _pendingGlassesPhoto.value = null
+            vesperAgent.sendMessage(
+                userMessage = promptText,
+                imageAttachments = listOf(attachment)
+            )
+            return
+        }
+
+        // No prompt — hold as pending so it can combine with the next voice/text input
         _pendingGlassesPhoto.value = attachment
 
-        // Start a timeout: if no directive arrives, auto-send with default prompt
         photoHoldJob = scope.launch {
             delay(PHOTO_HOLD_TIMEOUT_MS)
             val stillPending = _pendingGlassesPhoto.value
@@ -245,7 +283,7 @@ class GlassesIntegration @Inject constructor(
                 Log.i(TAG, "Photo hold timed out — sending with default prompt")
                 _pendingGlassesPhoto.value = null
                 vesperAgent.sendMessage(
-                    userMessage = promptText ?: "What am I looking at?",
+                    userMessage = "What am I looking at?",
                     imageAttachments = listOf(attachment)
                 )
             }
@@ -386,10 +424,12 @@ class GlassesIntegration @Inject constructor(
         if (clean.length <= MAX_SPEECH_CHARS) return clean
 
         // Use the LLM to intelligently summarize for speech
+        val sailorMouth = settingsStore.glassesSailorMouth.first()
+        val prompt = if (sailorMouth) SAILOR_SPEECH_SUMMARY_PROMPT else SPEECH_SUMMARY_PROMPT
         return try {
             val result = openRouterClient.sendMessage(
                 message = clean,
-                customSystemPrompt = SPEECH_SUMMARY_PROMPT
+                customSystemPrompt = prompt
             )
             result.getOrNull()?.trim()?.take(MAX_SPEECH_CHARS)
                 ?: truncateFallback(clean)
@@ -412,24 +452,53 @@ class GlassesIntegration @Inject constructor(
     }
 
     /**
-     * Narrate agent progress through glasses — only key moments.
-     * Skips intermediate stages to avoid rapid-fire chatter.
+     * Narrate agent progress through glasses — key moments with enough
+     * feedback that the user knows things are working, without being chatty.
      */
     private fun handleProgressUpdate(progress: AgentProgress) {
-        // Avoid repeating the same stage
-        if (progress.stage == lastSpokenProgressStage) return
+        // Avoid repeating the exact same stage + detail combo
+        if (progress.stage == lastSpokenProgressStage &&
+            progress.detail == lastSpokenProgressDetail) return
         lastSpokenProgressStage = progress.stage
+        lastSpokenProgressDetail = progress.detail
 
-        // Only narrate start (thinking) and completion — skip intermediate stages
         val narration = when (progress.stage) {
-            AgentProgressStage.MODEL_REQUEST -> "Thinking..."
-            AgentProgressStage.TOOL_COMPLETED -> "Done."
-            AgentProgressStage.WAITING_APPROVAL -> return // Handled separately
-            else -> return // Skip TOOL_PLANNED and TOOL_EXECUTING to reduce chatter
-        }
+            AgentProgressStage.MODEL_REQUEST -> {
+                // First model call = "thinking", subsequent = brief context
+                if (progress.detail?.contains("Summarizing") == true) null
+                else "Thinking..."
+            }
+            AgentProgressStage.TOOL_PLANNED -> {
+                // "Running 3 tool calls..." — let user know work is happening
+                progress.detail?.let { briefNarration(it) }
+            }
+            AgentProgressStage.TOOL_EXECUTING -> {
+                // "Executing read_file..." — narrate the action
+                progress.detail?.let { briefNarration(it) }
+            }
+            AgentProgressStage.TOOL_COMPLETED -> {
+                // Only narrate failures — successes flow into the next stage naturally
+                if (progress.detail?.contains("failed", ignoreCase = true) == true) {
+                    progress.detail?.let { briefNarration(it) }
+                } else null
+            }
+            AgentProgressStage.WAITING_APPROVAL -> null // Handled by approval listener
+        } ?: return
 
         Log.d(TAG, "Glasses narration: $narration")
         bridge.sendStatus(narration)
+    }
+
+    /**
+     * Clean up a progress detail string for brief spoken narration.
+     * Strips technical noise and keeps it under ~60 chars.
+     */
+    private fun briefNarration(detail: String): String {
+        return detail
+            .replace(Regex("\\(.*?\\)"), "")  // strip "(3/10)" iteration counts
+            .replace("...", "")
+            .trim()
+            .take(60)
     }
 
     /**
