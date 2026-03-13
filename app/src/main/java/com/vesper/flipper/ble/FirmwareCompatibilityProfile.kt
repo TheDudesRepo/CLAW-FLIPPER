@@ -56,6 +56,17 @@ object FirmwareCompatibilityLayer {
             )
         }
 
+        // During PROBING, allow commands through even though supportsCli/supportsRpc
+        // haven't been confirmed yet — the probe hasn't completed.
+        if (profile.transportMode == FirmwareTransportMode.PROBING) {
+            return FirmwareCommandCompatibility(
+                supported = true,
+                route = if (hasRpcMapping) FirmwareCommandRoute.RPC_APP_BRIDGE
+                         else FirmwareCommandRoute.DIRECT_CLI,
+                message = "Transport probing in progress — attempting command."
+            )
+        }
+
         if (!profile.supportsCli && !profile.supportsRpc) {
             return FirmwareCommandCompatibility(
                 supported = false,
@@ -105,8 +116,9 @@ object FirmwareCompatibilityLayer {
 
             FirmwareTransportMode.PROBING -> FirmwareCommandCompatibility(
                 supported = true,
-                route = FirmwareCommandRoute.DIRECT_CLI,
-                message = "Transport probing in progress — attempting CLI."
+                route = if (hasRpcMapping) FirmwareCommandRoute.RPC_APP_BRIDGE
+                         else FirmwareCommandRoute.DIRECT_CLI,
+                message = "Transport probing in progress — attempting command."
             )
 
             FirmwareTransportMode.UNAVAILABLE -> FirmwareCommandCompatibility(

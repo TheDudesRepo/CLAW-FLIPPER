@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
@@ -178,20 +179,27 @@ class DeviceViewModel @Inject constructor(
             refreshMutex.withLock {
                 _isRefreshing.value = true
                 try {
-                    // Do NOT auto-probe the automation channel here.
-                    // CLI/RPC probing only runs when the user explicitly requests
-                    // diagnostics or when a command execution actually needs it.
-                    fileSystem.getDeviceInfo().onSuccess { info ->
-                        _deviceInfo.value = info
-                    }
-                    fileSystem.getStorageInfo().onSuccess { info ->
-                        _storageInfo.value = info
+                    // Cap the total time spent refreshing so a non-responsive Flipper
+                    // does not monopolise the command pipeline for 30+ seconds
+                    // (each RPC timeout + CLI fallback chain adds up).
+                    withTimeoutOrNull(REFRESH_DEVICE_INFO_TIMEOUT_MS) {
+                        fileSystem.getDeviceInfo().onSuccess { info ->
+                            _deviceInfo.value = info
+                        }
+                        fileSystem.getStorageInfo().onSuccess { info ->
+                            _storageInfo.value = info
+                        }
                     }
                 } finally {
                     _isRefreshing.value = false
                 }
             }
         }
+    }
+
+    companion object {
+        /** Total wall-clock budget for the on-connect device info refresh. */
+        private const val REFRESH_DEVICE_INFO_TIMEOUT_MS = 6_000L
     }
 
     fun runConnectionDiagnostics() {
