@@ -476,7 +476,8 @@ class CommandExecutor @Inject constructor(
                     ?: throw IllegalArgumentException("FapHub app id/name required")
                 executeFapHubInstall(
                     appIdOrName = appIdOrName,
-                    directDownloadUrl = command.args.content?.trim()?.takeIf { it.isNotEmpty() }
+                    directDownloadUrl = command.args.downloadUrl?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: command.args.content?.trim()?.takeIf { it.isNotEmpty() }
                 )
             }
 

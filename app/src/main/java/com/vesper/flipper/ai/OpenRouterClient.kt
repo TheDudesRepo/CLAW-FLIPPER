@@ -705,6 +705,18 @@ class OpenRouterClient @Inject constructor(
             val argsObject = when (argsElement) {
                 null -> JsonObject(emptyMap())
                 is JsonObject -> argsElement
+                is JsonArray -> {
+                    // Some models wrap args in a single-element array: "args": [{...}]
+                    if (argsElement.size == 1 && argsElement[0] is JsonObject) {
+                        argsElement[0] as JsonObject
+                    } else if (argsElement.isEmpty()) {
+                        JsonObject(emptyMap())
+                    } else {
+                        return ParsedCommand(
+                            error = "Field \"args\" must be a JSON object, got array with ${argsElement.size} elements."
+                        )
+                    }
+                }
                 is JsonPrimitive -> {
                     val inner = argsElement.contentOrNull.orEmpty()
                     if (inner.isBlank()) {
@@ -768,7 +780,7 @@ class OpenRouterClient @Inject constructor(
                 command = stringArg("command", "cmd", "query", "app_id", "appId", "app", "package", "name"),
                 path = stringArg("path", "file_path", "filepath"),
                 destinationPath = stringArg("destination_path", "destinationPath", "dest", "destination"),
-                content = stringArg("content", "text", "data", "download_url", "downloadUrl", "url"),
+                content = stringArg("content", "text", "data"),
                 newName = stringArg("new_name", "newName"),
                 recursive = booleanArg("recursive", "is_recursive") ?: false,
                 artifactType = stringArg("artifact_type", "artifactType"),
@@ -788,7 +800,14 @@ class OpenRouterClient @Inject constructor(
                 enabled = booleanArg("enabled", "on"),
                 red = intArg("red", "r"),
                 green = intArg("green", "g"),
-                blue = intArg("blue", "b")
+                blue = intArg("blue", "b"),
+                // Repo browsing / download / GitHub search fields
+                repoId = stringArg("repo_id", "repoId", "repo"),
+                subPath = stringArg("sub_path", "subPath"),
+                downloadUrl = stringArg("download_url", "downloadUrl", "url"),
+                searchScope = stringArg("search_scope", "searchScope", "scope"),
+                // Smartglasses camera
+                photoPrompt = stringArg("photo_prompt", "photoPrompt")
             )
 
             val missingArgs = missingRequiredArgs(action, args)
@@ -860,6 +879,7 @@ class OpenRouterClient @Inject constructor(
             "ble_spam", "blespam", "ble_advertisement_spam" -> CommandAction.BLE_SPAM
             "led_control", "set_led", "led" -> CommandAction.LED_CONTROL
             "vibro_control", "vibro", "vibration" -> CommandAction.VIBRO_CONTROL
+            "request_photo", "take_photo", "capture_photo", "photo", "snap_photo" -> CommandAction.REQUEST_PHOTO
             else -> null
         }
     }
@@ -1224,6 +1244,9 @@ class OpenRouterClient @Inject constructor(
             "execute_cli",
             "forge_payload",
             "search_resources",
+            "browse_repo",
+            "download_resource",
+            "github_search",
             "list_vault",
             "run_runbook",
             "launch_app",
