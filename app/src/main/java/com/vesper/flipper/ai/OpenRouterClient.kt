@@ -322,7 +322,7 @@ class OpenRouterClient @Inject constructor(
     private suspend fun describeImage(
         apiKey: String,
         attachment: ImageAttachment
-    ): String? {
+    ): String? = withContext(Dispatchers.IO) {
         val base64Len = attachment.base64Data.length
         Log.d(TAG, "describeImage: starting vision call (mime=${attachment.mimeType}, base64len=$base64Len)")
 
@@ -374,7 +374,7 @@ class OpenRouterClient @Inject constructor(
                         val desc = result.content.takeIf { it.isNotBlank() }
                         if (desc != null) {
                             Log.d(TAG, "describeImage: success with $model (${desc.length} chars)")
-                            return desc
+                            return@withContext desc
                         }
                         Log.w(TAG, "describeImage: $model returned blank content, trying next model")
                     }
@@ -388,7 +388,7 @@ class OpenRouterClient @Inject constructor(
         }
 
         Log.e(TAG, "describeImage: ALL vision models failed for image (base64len=$base64Len)")
-        return null
+        return@withContext null
     }
 
     /**
