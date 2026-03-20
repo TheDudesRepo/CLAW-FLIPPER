@@ -360,16 +360,20 @@ fun ChatScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(conversationState.messages) { message ->
-                        val isLastMessage = message == conversationState.messages.lastOrNull()
+                    val lastIndex = conversationState.messages.lastIndex
+                    items(
+                        items = conversationState.messages,
+                        key = { it.id }
+                    ) { message ->
+                        val index = conversationState.messages.indexOf(message)
+                        val isLastMessage = index == lastIndex
                         ChatMessageItem(
                             message = message,
                             ttsState = ttsState,
                             onSpeak = { viewModel.speakText(it) },
                             onStopSpeaking = { viewModel.stopSpeaking() },
                             showRetry = isLastMessage && !conversationState.isLoading &&
-                                    conversationState.error != null &&
-                                    message.role == MessageRole.ASSISTANT,
+                                    conversationState.error != null,
                             onRetry = { viewModel.retryLastMessage() }
                         )
                     }
@@ -382,22 +386,16 @@ fun ChatScreen(
                 }
             }
 
-            // Error snackbar with retry
-            conversationState.error?.let { error ->
-                Snackbar(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(16.dp),
-                    containerColor = RiskHigh,
-                    action = {
-                        TextButton(
-                            onClick = { viewModel.retryLastMessage() }
-                        ) {
-                            Text("Retry", color = Color.White)
-                        }
-                    }
-                ) {
-                    Text(error)
+            // Show error via SnackbarHost with retry action
+            LaunchedEffect(conversationState.error) {
+                val error = conversationState.error ?: return@LaunchedEffect
+                val result = snackbarHostState.showSnackbar(
+                    message = error,
+                    actionLabel = "Retry",
+                    duration = SnackbarDuration.Long
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    viewModel.retryLastMessage()
                 }
             }
         }

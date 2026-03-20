@@ -132,18 +132,43 @@ class VesperAgent @Inject constructor(
 
     /**
      * Retry the last AI request by re-submitting the current conversation
-     * (minus any trailing error/incomplete assistant messages) back to the model.
+     * back to the model. Only strips the final failed assistant turn —
+     * earlier successful tool exchanges are preserved to avoid re-triggering
+     * side-effecting commands on the Flipper.
      */
     suspend fun retryLastMessage(): ConversationState {
         val current = _conversationState.value
         if (current.isLoading) return current
 
-        // Strip trailing assistant/tool messages that represent the failed attempt
+        // Find the safe rollback point: keep everything up to and including the
+        // last TOOL message with successful results (a completed exchange), or
+        // the last USER message — whichever comes later.
         val messages = current.messages.toMutableList()
-        while (messages.isNotEmpty()) {
-            val last = messages.last()
-            if (last.role == MessageRole.USER) break
-            messages.removeAt(messages.size - 1)
+        var cutIndex = messages.size
+        for (i in messages.indices.reversed()) {
+            val msg = messages[i]
+            when {
+                // Stop at a user message — this is the prompt we'll retry from
+                msg.role == MessageRole.USER -> { cutIndex = i + 1; break }
+                // Stop at a completed tool result — the exchange before this succeeded
+                msg.role == MessageRole.TOOL && msg.toolResults?.any { it.success } == true -> {
+                    cutIndex = i + 1; break
+                }
+            }
+        }
+
+        // Nothing to retry if we'd keep everything or the list is empty
+        if (cutIndex >= messages.size || cutIndex == 0) {
+            if (current.error != null) {
+                // Re-submit current messages as-is (e.g. API error, no assistant msg added)
+            } else {
+                return current
+            }
+        } else {
+            // Remove messages from the failed turn onwards
+            while (messages.size > cutIndex) {
+                messages.removeAt(messages.size - 1)
+            }
         }
 
         if (messages.isEmpty()) return current
@@ -673,7 +698,16 @@ class VesperAgent @Inject constructor(
             status = status.name,
             metadataJson = metadata?.let { persistenceJson.encodeToString(it) },
             sessionId = sessionId,
-            imageAttachmentsJson = imageAttachments?.takeIf { it.isNotEmpty() }?.let { persistenceJson.encodeToString(it) }
+            // Cap each image's base64 data to avoid exceeding Android's 2MB CursorWindow.
+            // Full-resolution images are kept in memory for the current session.
+            imageAttachmentsJson = imageAttachments?.takeIf { it.isNotEmpty() }?.let { attachments ->
+                val capped = attachments.map { img ->
+                    if (img.base64Data.length > MAX_PERSISTED_IMAGE_BASE64_LENGTH) {
+                        img.copy(base64Data = img.base64Data.take(MAX_PERSISTED_IMAGE_BASE64_LENGTH))
+                    } else img
+                }
+                persistenceJson.encodeToString(capped)
+            }
         )
     }
 
@@ -767,5 +801,7 @@ class VesperAgent @Inject constructor(
     companion object {
         private const val MAX_PERSISTED_MESSAGES = 220
         private const val CONVERSATION_PERSIST_DEBOUNCE_MS = 250L
+        /** ~300KB per image keeps total row size well under Android's 2MB CursorWindow limit. */
+        private const val MAX_PERSISTED_IMAGE_BASE64_LENGTH = 300_000
     }
 }

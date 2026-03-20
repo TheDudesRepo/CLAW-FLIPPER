@@ -972,37 +972,38 @@ class OpenRouterClient @Inject constructor(
      * Attempt to repair common JSON malformations produced by LLMs.
      * Handles: trailing commas, unclosed strings/braces/brackets, and
      * markdown code fences wrapping JSON.
+     *
+     * All transformations are string-context-aware to avoid corrupting
+     * values inside JSON strings (e.g. a path containing ",}").
      */
     private fun repairMalformedJson(input: String): String {
+        // Guard against excessively large inputs
+        if (input.length > MAX_REPAIRABLE_JSON_LENGTH) return input
+
         var s = input.trim()
 
         // Strip markdown code fences: ```json ... ``` or ``` ... ```
         if (s.startsWith("```")) {
             val firstNewline = s.indexOf('\n')
-            if (firstNewline > 0) {
-                s = s.substring(firstNewline + 1)
-            }
+            s = if (firstNewline > 0) s.substring(firstNewline + 1) else s.removePrefix("```")
             if (s.endsWith("```")) {
                 s = s.dropLast(3).trimEnd()
             }
         }
 
-        // Remove trailing commas before } or ] (a very common LLM mistake)
-        s = s.replace(Regex(",\\s*}"), "}")
-        s = s.replace(Regex(",\\s*]"), "]")
-
-        // If JSON already parses cleanly after comma repair, return early.
-        runCatching { json.parseToJsonElement(s) }.onSuccess { return s }
-
-        // Attempt to close unclosed strings, braces, and brackets.
-        // Walk the string to figure out what's still open.
+        // Single-pass walk: track string context, trailing commas, and bracket depth.
         var inString = false
         var escaped = false
-        val stack = mutableListOf<Char>() // tracks open { and [
-        var lastNonWs = ' '
+        val stack = mutableListOf<Char>()
+        val sb = StringBuilder(s.length + 16)
+        // Buffer to hold a comma + optional whitespace so we can drop it
+        // if the next non-whitespace char is } or ].
+        var pendingComma: StringBuilder? = null
 
         for (ch in s) {
             if (inString) {
+                pendingComma?.let { sb.append(it); pendingComma = null }
+                sb.append(ch)
                 if (escaped) {
                     escaped = false
                 } else when (ch) {
@@ -1011,31 +1012,58 @@ class OpenRouterClient @Inject constructor(
                 }
             } else {
                 when (ch) {
-                    '"' -> inString = true
-                    '{' -> stack.add('{')
-                    '[' -> stack.add('[')
-                    '}' -> if (stack.lastOrNull() == '{') stack.removeLastOrNull()
-                    ']' -> if (stack.lastOrNull() == '[') stack.removeLastOrNull()
+                    ',' -> {
+                        // Buffer the comma — flush it only if not followed by } or ]
+                        if (pendingComma == null) pendingComma = StringBuilder()
+                        pendingComma!!.append(ch)
+                    }
+                    '}', ']' -> {
+                        // Drop any buffered trailing comma before a closer
+                        pendingComma = null
+                        sb.append(ch)
+                        if (ch == '}' && stack.lastOrNull() == '{') stack.removeLast()
+                        else if (ch == ']' && stack.lastOrNull() == '[') stack.removeLast()
+                    }
+                    else -> {
+                        // Flush buffered comma — it was not trailing
+                        pendingComma?.let { sb.append(it); pendingComma = null }
+                        sb.append(ch)
+                        when (ch) {
+                            '"' -> inString = true
+                            '{' -> stack.add('{')
+                            '[' -> stack.add('[')
+                        }
+                    }
+                }
+                // Accumulate whitespace into the pending comma buffer
+                if (ch.isWhitespace() && pendingComma != null) {
+                    pendingComma!!.append(ch)
                 }
             }
-            if (!ch.isWhitespace()) lastNonWs = ch
         }
 
-        val sb = StringBuilder(s)
+        // Flush any trailing buffered comma (will be stripped if we close brackets)
+        pendingComma?.let { sb.append(it) }
+
+        // If JSON already parses cleanly after comma repair, return early.
+        val commaRepaired = sb.toString()
+        runCatching { json.parseToJsonElement(commaRepaired) }.onSuccess { return commaRepaired }
 
         // Close an unterminated string
         if (inString) sb.append('"')
 
-        // Remove a dangling comma before we close brackets
-        val trimmedEnd = sb.toString().trimEnd()
-        if (trimmedEnd.endsWith(",")) {
-            sb.clear()
-            sb.append(trimmedEnd.dropLast(1))
+        // Remove a dangling comma/whitespace at the end before closing brackets
+        while (sb.isNotEmpty() && (sb.last() == ',' || sb.last().isWhitespace())) {
+            sb.deleteCharAt(sb.length - 1)
         }
 
-        // Close unclosed braces/brackets in reverse order
-        for (i in stack.indices.reversed()) {
-            when (stack[i]) {
+        // Close unclosed braces/brackets in reverse order.
+        // Limit to a reasonable depth to avoid synthesizing deeply nested structures
+        // from adversarial input.
+        val unclosedCount = stack.size.coerceAtMost(MAX_REPAIR_BRACKET_DEPTH)
+        for (i in (stack.size - unclosedCount) until stack.size) {
+            val idx = stack.size - 1 - (i - (stack.size - unclosedCount))
+            when (stack[idx]) {
                 '{' -> sb.append('}')
                 '[' -> sb.append(']')
             }
@@ -1375,6 +1403,10 @@ class OpenRouterClient @Inject constructor(
         private const val TOOL_CALL_RESPONSE_MAX_TOKENS = 1024
         private const val FORGE_RESPONSE_MAX_TOKENS = 6144
         private const val DEFAULT_RESPONSE_MAX_TOKENS = 720
+        /** Max input size for JSON repair to prevent resource exhaustion. */
+        private const val MAX_REPAIRABLE_JSON_LENGTH = 100_000
+        /** Max unclosed brackets the repair function will close. */
+        private const val MAX_REPAIR_BRACKET_DEPTH = 10
 
         private val SUPPORTED_ACTIONS = listOf(
             "list_directory",
