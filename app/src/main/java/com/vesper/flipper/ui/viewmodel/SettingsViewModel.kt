@@ -2,6 +2,7 @@ package com.vesper.flipper.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vesper.flipper.data.AiProvider
 import com.vesper.flipper.data.ModelInfo
 import com.vesper.flipper.data.OpenRouterModelCatalog
 import com.vesper.flipper.data.SettingsStore
@@ -14,7 +15,11 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class SettingsState(
+    val aiProvider: AiProvider = AiProvider.OPENROUTER,
     val apiKey: String = "",
+    val openRouterApiKey: String = "",
+    val anthropicApiKey: String = "",
+    val openAiApiKey: String = "",
     val selectedModel: String = SettingsStore.DEFAULT_MODEL,
     val aiMaxIterations: Int = SettingsStore.DEFAULT_AI_MAX_ITERATIONS,
     val autoConnect: Boolean = true,
@@ -64,26 +69,47 @@ class SettingsViewModel @Inject constructor(
     private fun loadSettings() {
         viewModelScope.launch {
             combine(
+                settingsStore.aiProvider,
                 settingsStore.apiKey,
+                settingsStore.openRouterApiKey,
+                settingsStore.anthropicApiKey,
+                settingsStore.openAiApiKey,
                 settingsStore.selectedModel,
                 settingsStore.aiMaxIterations,
                 settingsStore.autoConnect,
-                settingsStore.defaultProjectPath,
-                settingsStore.permissionDuration,
-                settingsStore.hapticFeedback,
-                settingsStore.darkMode,
-                settingsStore.auditRetentionDays
+                settingsStore.defaultProjectPath
             ) { values ->
                 SettingsState(
-                    apiKey = (values[0] as? String) ?: "",
-                    selectedModel = values[1] as String,
-                    aiMaxIterations = values[2] as Int,
-                    autoConnect = values[3] as Boolean,
-                    defaultProjectPath = values[4] as String,
-                    permissionDuration = values[5] as Long,
-                    hapticFeedback = values[6] as Boolean,
-                    darkMode = values[7] as Boolean,
-                    auditRetentionDays = values[8] as Int
+                    aiProvider = values[0] as AiProvider,
+                    apiKey = (values[1] as? String) ?: "",
+                    openRouterApiKey = (values[2] as? String) ?: "",
+                    anthropicApiKey = (values[3] as? String) ?: "",
+                    openAiApiKey = (values[4] as? String) ?: "",
+                    selectedModel = values[5] as String,
+                    aiMaxIterations = values[6] as Int,
+                    autoConnect = values[7] as Boolean,
+                    defaultProjectPath = values[8] as String
+                )
+            }.combine(
+                combine(
+                    settingsStore.permissionDuration,
+                    settingsStore.hapticFeedback,
+                    settingsStore.darkMode,
+                    settingsStore.auditRetentionDays
+                ) { values ->
+                    CoreSettingsBundle(
+                        permissionDuration = values[0] as Long,
+                        hapticFeedback = values[1] as Boolean,
+                        darkMode = values[2] as Boolean,
+                        auditRetentionDays = values[3] as Int
+                    )
+                }
+            ) { base, core ->
+                base.copy(
+                    permissionDuration = core.permissionDuration,
+                    hapticFeedback = core.hapticFeedback,
+                    darkMode = core.darkMode,
+                    auditRetentionDays = core.auditRetentionDays
                 )
             }.combine(
                 combine(
@@ -138,7 +164,11 @@ class SettingsViewModel @Inject constructor(
                 )
             }.collect { settings ->
                 _state.update { it.copy(
+                    aiProvider = settings.aiProvider,
                     apiKey = settings.apiKey,
+                    openRouterApiKey = settings.openRouterApiKey,
+                    anthropicApiKey = settings.anthropicApiKey,
+                    openAiApiKey = settings.openAiApiKey,
                     selectedModel = settings.selectedModel,
                     aiMaxIterations = settings.aiMaxIterations,
                     autoConnect = settings.autoConnect,
@@ -171,10 +201,39 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setAiProvider(provider: AiProvider) {
+        viewModelScope.launch {
+            settingsStore.setAiProvider(provider)
+            // When switching providers, also switch to the default model for that provider
+            val defaultModel = SettingsStore.defaultModelForProvider(provider)
+            settingsStore.setSelectedModel(defaultModel)
+            _state.update { it.copy(aiProvider = provider, selectedModel = defaultModel) }
+            // Update the available models list for the new provider
+            if (provider == AiProvider.OPENROUTER) {
+                refreshAvailableModels()
+            } else {
+                _availableModels.value = SettingsStore.modelsForProvider(provider)
+            }
+        }
+    }
+
     fun setApiKey(key: String) {
         viewModelScope.launch {
-            settingsStore.setApiKey(key)
-            _state.update { it.copy(apiKey = key) }
+            // Write to the key slot for the currently selected provider
+            when (_state.value.aiProvider) {
+                AiProvider.OPENROUTER -> {
+                    settingsStore.setOpenRouterApiKey(key)
+                    _state.update { it.copy(apiKey = key, openRouterApiKey = key) }
+                }
+                AiProvider.ANTHROPIC -> {
+                    settingsStore.setAnthropicApiKey(key)
+                    _state.update { it.copy(apiKey = key, anthropicApiKey = key) }
+                }
+                AiProvider.OPENAI -> {
+                    settingsStore.setOpenAiApiKey(key)
+                    _state.update { it.copy(apiKey = key, openAiApiKey = key) }
+                }
+            }
         }
     }
 
@@ -195,6 +254,14 @@ class SettingsViewModel @Inject constructor(
     fun refreshAvailableModels() {
         if (_isRefreshingModels.value) return
 
+        val provider = _state.value.aiProvider
+
+        // For Anthropic/OpenAI direct, we have a static list — no need to fetch
+        if (provider != AiProvider.OPENROUTER) {
+            _availableModels.value = SettingsStore.modelsForProvider(provider)
+            return
+        }
+
         viewModelScope.launch {
             _isRefreshingModels.value = true
             openRouterModelCatalog.fetchLatestByManufacturer()
@@ -212,7 +279,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun getModelDisplayName(modelId: String): String {
-        val displayList = (_availableModels.value + SettingsStore.FALLBACK_MODELS).distinctBy { it.id }
+        val providerModels = SettingsStore.modelsForProvider(_state.value.aiProvider)
+        val displayList = (_availableModels.value + providerModels + SettingsStore.FALLBACK_MODELS).distinctBy { it.id }
         return SettingsStore.getModelDisplayName(modelId, displayList)
     }
 
@@ -350,6 +418,13 @@ class SettingsViewModel @Inject constructor(
         }
     }
 }
+
+private data class CoreSettingsBundle(
+    val permissionDuration: Long,
+    val hapticFeedback: Boolean,
+    val darkMode: Boolean,
+    val auditRetentionDays: Int
+)
 
 private data class TtsSettingsBundle(
     val autoApproveMedium: Boolean,

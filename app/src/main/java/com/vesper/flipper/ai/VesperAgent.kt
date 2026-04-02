@@ -292,7 +292,8 @@ class VesperAgent @Inject constructor(
         var apiMessages: MutableList<ChatMessage> = currentMessages.toMutableList()
         val hasImages = currentMessages.any { !it.imageAttachments.isNullOrEmpty() }
         if (hasImages) {
-            val apiKey = settingsStore.apiKey.first()
+            // Vision preprocessing always uses OpenRouter, regardless of the selected chat provider
+            val apiKey = settingsStore.openRouterApiKey.first()
             if (apiKey != null) {
                 try {
                     apiMessages = openRouterClient.preprocessImagesAsText(currentMessages, apiKey).toMutableList()

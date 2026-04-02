@@ -57,9 +57,10 @@ class OpenRouterTtsService @Inject constructor(
 
         stop()
 
-        val apiKey = settingsStore.apiKey.first()
+        // TTS always uses OpenRouter regardless of the selected chat provider
+        val apiKey = settingsStore.openRouterApiKey.first()
         if (apiKey.isNullOrBlank()) {
-            _state.value = TtsState.Error("OpenRouter API key not configured")
+            _state.value = TtsState.Error("OpenRouter API key not configured (required for TTS)")
             return
         }
 
@@ -102,7 +103,7 @@ class OpenRouterTtsService @Inject constructor(
      */
     suspend fun isAvailable(): Boolean {
         val enabled = settingsStore.ttsEnabled.first()
-        val apiKey = settingsStore.apiKey.first()
+        val apiKey = settingsStore.openRouterApiKey.first()
         return enabled && !apiKey.isNullOrBlank()
     }
 

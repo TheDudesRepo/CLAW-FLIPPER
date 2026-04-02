@@ -1,6 +1,7 @@
 package com.vesper.flipper.ai
 
 import android.util.Log
+import com.vesper.flipper.data.AiProvider
 import com.vesper.flipper.data.SettingsStore
 import com.vesper.flipper.domain.model.*
 import com.vesper.flipper.security.InputValidator
@@ -69,6 +70,7 @@ class OpenRouterClient @Inject constructor(
     /**
      * Send a chat completion request with tool calling.
      * Includes rate limiting, retry logic with exponential backoff, and response validation.
+     * Routes to the correct provider (OpenRouter, Anthropic, or OpenAI) based on settings.
      */
     suspend fun chat(
         messages: List<ChatMessage>,
@@ -82,8 +84,9 @@ class OpenRouterClient @Inject constructor(
             )
         }
 
+        val provider = settingsStore.aiProvider.first()
         val apiKey = settingsStore.apiKey.first()
-            ?: return@withContext ChatCompletionResult.Error("OpenRouter API key not configured")
+            ?: return@withContext ChatCompletionResult.Error("${provider.displayName} API key not configured")
 
         // Validate API key format
         if (!InputValidator.isValidApiKey(apiKey)) {
@@ -113,6 +116,38 @@ class OpenRouterClient @Inject constructor(
             baseSystemPrompt
         }
 
+        // --- Anthropic direct API path ---
+        if (provider == AiProvider.ANTHROPIC) {
+            val requestMessages = sanitizeAndBuildRequestMessages(processedMessages)
+            val tool = if (glassesEnabled) EXECUTE_COMMAND_TOOL else buildToolWithoutGlasses()
+            val httpRequest = buildAnthropicRequest(
+                apiKey = apiKey,
+                model = model,
+                systemPrompt = systemPrompt,
+                messages = requestMessages,
+                tool = tool
+            )
+            val result = executeWithRetry(httpRequest, parseAs = ParseFormat.ANTHROPIC)
+            return@withContext result
+        }
+
+        // --- OpenAI direct API path ---
+        if (provider == AiProvider.OPENAI) {
+            val requestMessages = buildList {
+                add(OpenRouterMessage.text(role = "system", content = systemPrompt))
+                addAll(sanitizeAndBuildRequestMessages(processedMessages))
+            }
+            val httpRequest = buildOpenAiRequest(
+                apiKey = apiKey,
+                model = model,
+                messages = requestMessages,
+                includeGlassesActions = glassesEnabled
+            )
+            val result = executeWithRetry(httpRequest)
+            return@withContext result
+        }
+
+        // --- OpenRouter path (default, with model fallback cascade) ---
         val requestMessages = buildList {
             add(OpenRouterMessage.text(role = "system", content = systemPrompt))
             addAll(sanitizeAndBuildRequestMessages(processedMessages))
@@ -399,10 +434,30 @@ class OpenRouterClient @Inject constructor(
     suspend fun chatSimple(prompt: String): String? = withContext(Dispatchers.IO) {
         if (!rateLimiter.tryAcquire()) return@withContext null
 
+        val provider = settingsStore.aiProvider.first()
         val apiKey = settingsStore.apiKey.first() ?: return@withContext null
         if (!InputValidator.isValidApiKey(apiKey)) return@withContext null
 
         val model = settingsStore.selectedModel.first()
+
+        if (provider == AiProvider.ANTHROPIC) {
+            val messages = listOf(
+                OpenRouterMessage.text(role = "user", content = prompt)
+            )
+            val httpRequest = buildAnthropicRequest(
+                apiKey = apiKey,
+                model = model,
+                systemPrompt = null,
+                messages = messages,
+                tool = null,
+                maxTokens = FORGE_RESPONSE_MAX_TOKENS
+            )
+            return@withContext when (val result = executeWithRetry(httpRequest, parseAs = ParseFormat.ANTHROPIC)) {
+                is ChatCompletionResult.Success -> result.content.takeIf { it.isNotBlank() }
+                is ChatCompletionResult.Error -> null
+            }
+        }
+
         val messages = listOf(
             OpenRouterMessage.text(role = "user", content = prompt)
         )
@@ -418,14 +473,23 @@ class OpenRouterClient @Inject constructor(
         val requestBody = json.encodeToString(request)
             .toRequestBody("application/json".toMediaType())
 
-        val httpRequest = Request.Builder()
-            .url(OPENROUTER_API_URL)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .addHeader("HTTP-Referer", "https://vesper.flipper.app")
-            .addHeader("X-Title", "Vesper Flipper Control")
-            .post(requestBody)
-            .build()
+        val httpRequest = if (provider == AiProvider.OPENAI) {
+            Request.Builder()
+                .url(OPENAI_API_URL)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+        } else {
+            Request.Builder()
+                .url(OPENROUTER_API_URL)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("HTTP-Referer", "https://vesper.flipper.app")
+                .addHeader("X-Title", "Vesper Flipper Control")
+                .post(requestBody)
+                .build()
+        }
 
         val result = executeWithRetry(httpRequest)
         when (result) {
@@ -463,9 +527,234 @@ class OpenRouterClient @Inject constructor(
     }
 
     /**
+     * Build an OpenAI-direct request. Same JSON format as OpenRouter, different URL/headers.
+     */
+    private fun buildOpenAiRequest(
+        apiKey: String,
+        model: String,
+        messages: List<OpenRouterMessage>,
+        includeGlassesActions: Boolean = false,
+        maxTokens: Int = TOOL_CALL_RESPONSE_MAX_TOKENS
+    ): Request {
+        val tool = if (includeGlassesActions) EXECUTE_COMMAND_TOOL else buildToolWithoutGlasses()
+        val request = OpenRouterRequest(
+            model = model,
+            messages = messages,
+            tools = listOf(tool),
+            toolChoice = "auto",
+            maxTokens = maxTokens
+        )
+
+        val requestBody = json.encodeToString(request)
+            .toRequestBody("application/json".toMediaType())
+
+        return Request.Builder()
+            .url(OPENAI_API_URL)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(requestBody)
+            .build()
+    }
+
+    // ── Anthropic Messages API ─────────────────────────────────────────
+
+    /**
+     * Build an Anthropic Messages API request.
+     * Key differences from OpenAI/OpenRouter:
+     * - System prompt is a top-level `system` field, not a message
+     * - Auth via `x-api-key` header, not `Authorization: Bearer`
+     * - Tool schema uses `input_schema` instead of `parameters`
+     * - Messages must not contain `system` role
+     */
+    private fun buildAnthropicRequest(
+        apiKey: String,
+        model: String,
+        systemPrompt: String?,
+        messages: List<OpenRouterMessage>,
+        tool: OpenRouterTool?,
+        maxTokens: Int = TOOL_CALL_RESPONSE_MAX_TOKENS
+    ): Request {
+        val body = buildJsonObject {
+            put("model", model)
+            put("max_tokens", maxTokens)
+
+            if (!systemPrompt.isNullOrBlank()) {
+                put("system", systemPrompt)
+            }
+
+            // Convert OpenRouterMessage list to Anthropic message format.
+            // Anthropic requires alternating user/assistant turns; tool results
+            // are sent as user messages with tool_result content blocks.
+            putJsonArray("messages") {
+                messages.forEach { msg ->
+                    when (msg.role) {
+                        "system" -> { /* skip — already in top-level system field */ }
+                        "tool" -> {
+                            // Anthropic: tool results are user messages with tool_result content blocks
+                            addJsonObject {
+                                put("role", "user")
+                                putJsonArray("content") {
+                                    addJsonObject {
+                                        put("type", "tool_result")
+                                        put("tool_use_id", msg.toolCallId ?: "")
+                                        put("content", msg.content?.jsonPrimitive?.contentOrNull ?: "")
+                                    }
+                                }
+                            }
+                        }
+                        "assistant" -> {
+                            addJsonObject {
+                                put("role", "assistant")
+                                // Anthropic assistant messages use content blocks array
+                                putJsonArray("content") {
+                                    val textContent = msg.content?.jsonPrimitive?.contentOrNull
+                                    if (!textContent.isNullOrBlank()) {
+                                        addJsonObject {
+                                            put("type", "text")
+                                            put("text", textContent)
+                                        }
+                                    }
+                                    msg.toolCalls?.forEach { tc ->
+                                        addJsonObject {
+                                            put("type", "tool_use")
+                                            put("id", tc.id)
+                                            put("name", tc.function.name)
+                                            // Parse arguments string back to JSON object
+                                            val inputJson = try {
+                                                json.parseToJsonElement(tc.function.arguments)
+                                            } catch (_: Exception) {
+                                                JsonObject(emptyMap())
+                                            }
+                                            put("input", inputJson)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else -> {
+                            // user messages
+                            addJsonObject {
+                                put("role", msg.role)
+                                // Handle both string and array content
+                                when (val c = msg.content) {
+                                    is JsonPrimitive -> put("content", c.contentOrNull ?: "")
+                                    is JsonArray -> put("content", c) // multimodal
+                                    else -> put("content", "")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Convert tool schema for Anthropic format
+            if (tool != null) {
+                putJsonArray("tools") {
+                    addJsonObject {
+                        put("name", tool.function.name)
+                        put("description", tool.function.description)
+                        put("input_schema", tool.function.parameters)
+                    }
+                }
+                put("tool_choice", buildJsonObject { put("type", "auto") })
+            }
+        }
+
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
+
+        return Request.Builder()
+            .url(ANTHROPIC_API_URL)
+            .addHeader("x-api-key", apiKey)
+            .addHeader("anthropic-version", ANTHROPIC_VERSION)
+            .addHeader("Content-Type", "application/json")
+            .post(requestBody)
+            .build()
+    }
+
+    /**
+     * Parse an Anthropic Messages API response into our unified ChatCompletionResult.
+     *
+     * Anthropic response shape:
+     * ```json
+     * {
+     *   "id": "msg_...",
+     *   "model": "claude-...",
+     *   "content": [
+     *     {"type": "text", "text": "..."},
+     *     {"type": "tool_use", "id": "toolu_...", "name": "execute_command", "input": {...}}
+     *   ],
+     *   "stop_reason": "end_turn" | "tool_use",
+     *   "usage": {"input_tokens": N, "output_tokens": N}
+     * }
+     * ```
+     */
+    private fun parseAnthropicResponse(responseBody: String): ChatCompletionResult {
+        return try {
+            val root = try {
+                json.parseToJsonElement(responseBody).jsonObject
+            } catch (_: Exception) {
+                return ChatCompletionResult.Error("Invalid JSON in Anthropic response")
+            }
+
+            // Check for Anthropic error envelope: {"type":"error","error":{"type":"...","message":"..."}}
+            if (root["type"]?.jsonPrimitive?.contentOrNull == "error") {
+                val errorObj = root["error"]?.jsonObject
+                val errorMsg = errorObj?.get("message")?.jsonPrimitive?.contentOrNull ?: "Unknown Anthropic API error"
+                Log.e(TAG, "Anthropic API error: $errorMsg")
+                return ChatCompletionResult.Error("API error: $errorMsg")
+            }
+
+            val modelName = root["model"]?.jsonPrimitive?.contentOrNull ?: ""
+            val contentArray = root["content"]?.jsonArray
+                ?: return ChatCompletionResult.Error("No content in Anthropic response")
+
+            val textParts = mutableListOf<String>()
+            val toolCalls = mutableListOf<ToolCall>()
+
+            for (block in contentArray) {
+                val obj = block.jsonObject
+                when (obj["type"]?.jsonPrimitive?.contentOrNull) {
+                    "text" -> {
+                        obj["text"]?.jsonPrimitive?.contentOrNull?.let { textParts.add(it) }
+                    }
+                    "tool_use" -> {
+                        val tcId = obj["id"]?.jsonPrimitive?.contentOrNull ?: ""
+                        val tcName = obj["name"]?.jsonPrimitive?.contentOrNull ?: ""
+                        val tcInput = obj["input"]?.toString() ?: "{}"
+                        if (tcId.isNotBlank() && tcName.isNotBlank()) {
+                            toolCalls.add(ToolCall(id = tcId, name = tcName, arguments = tcInput))
+                        } else {
+                            Log.w(TAG, "Dropping malformed Anthropic tool_use: id='$tcId' name='$tcName'")
+                        }
+                    }
+                }
+            }
+
+            val usage = root["usage"]?.jsonObject
+            val totalTokens = usage?.let {
+                val input = it["input_tokens"]?.jsonPrimitive?.intOrNull ?: 0
+                val output = it["output_tokens"]?.jsonPrimitive?.intOrNull ?: 0
+                input + output
+            }
+
+            ChatCompletionResult.Success(
+                content = textParts.joinToString("\n"),
+                toolCalls = toolCalls.takeIf { it.isNotEmpty() }?.take(MAX_TOOL_CALLS_PER_RESPONSE),
+                model = modelName,
+                tokensUsed = totalTokens
+            )
+        } catch (e: Exception) {
+            ChatCompletionResult.Error("Failed to parse Anthropic response: ${e.message}")
+        }
+    }
+
+    /**
      * Execute HTTP request with exponential backoff retry for transient failures.
      */
-    private suspend fun executeWithRetry(request: Request): ChatCompletionResult {
+    private suspend fun executeWithRetry(
+        request: Request,
+        parseAs: ParseFormat = ParseFormat.OPENAI_COMPAT
+    ): ChatCompletionResult {
         var lastException: Exception? = null
         var delayMs = RetryConfig.INITIAL_DELAY_MS
 
@@ -501,7 +790,10 @@ class OpenRouterClient @Inject constructor(
                         return ChatCompletionResult.Error("Empty response from API")
                     }
 
-                    return parseResponse(responseBody)
+                    return when (parseAs) {
+                        ParseFormat.ANTHROPIC -> parseAnthropicResponse(responseBody)
+                        ParseFormat.OPENAI_COMPAT -> parseResponse(responseBody)
+                    }
                 }
 
             } catch (e: SocketTimeoutException) {
@@ -1275,6 +1567,7 @@ class OpenRouterClient @Inject constructor(
             return@withContext Result.failure(Exception("Rate limit exceeded"))
         }
 
+        val provider = settingsStore.aiProvider.first()
         val apiKey = settingsStore.apiKey.first()
             ?: return@withContext Result.failure(Exception("API key not configured"))
         if (!InputValidator.isValidApiKey(apiKey)) {
@@ -1282,13 +1575,27 @@ class OpenRouterClient @Inject constructor(
         }
 
         val model = settingsStore.selectedModel.first()
-
         val compactMessages = trimConversationForRequest(messages)
+        val systemPrompt = customSystemPrompt ?: baseSystemPrompt
+
+        if (provider == AiProvider.ANTHROPIC) {
+            val requestMessages = sanitizeAndBuildRequestMessages(compactMessages)
+            val httpRequest = buildAnthropicRequest(
+                apiKey = apiKey,
+                model = model,
+                systemPrompt = systemPrompt,
+                messages = requestMessages,
+                tool = null,
+                maxTokens = DEFAULT_RESPONSE_MAX_TOKENS
+            )
+            return@withContext when (val result = executeWithRetry(httpRequest, parseAs = ParseFormat.ANTHROPIC)) {
+                is ChatCompletionResult.Success -> Result.success(result.content)
+                is ChatCompletionResult.Error -> Result.failure(Exception(result.message))
+            }
+        }
+
         val requestMessages = buildList {
-            add(OpenRouterMessage.text(
-                role = "system",
-                content = customSystemPrompt ?: baseSystemPrompt
-            ))
+            add(OpenRouterMessage.text(role = "system", content = systemPrompt))
             addAll(sanitizeAndBuildRequestMessages(compactMessages))
         }
 
@@ -1303,14 +1610,23 @@ class OpenRouterClient @Inject constructor(
         val requestBody = json.encodeToString(request)
             .toRequestBody("application/json".toMediaType())
 
-        val httpRequest = Request.Builder()
-            .url(OPENROUTER_API_URL)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .addHeader("HTTP-Referer", "https://vesper.flipper.app")
-            .addHeader("X-Title", "Vesper Flipper Control")
-            .post(requestBody)
-            .build()
+        val httpRequest = if (provider == AiProvider.OPENAI) {
+            Request.Builder()
+                .url(OPENAI_API_URL)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+        } else {
+            Request.Builder()
+                .url(OPENROUTER_API_URL)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("HTTP-Referer", "https://vesper.flipper.app")
+                .addHeader("X-Title", "Vesper Flipper Control")
+                .post(requestBody)
+                .build()
+        }
 
         when (val result = executeWithRetry(httpRequest)) {
             is ChatCompletionResult.Success -> Result.success(result.content)
@@ -1385,9 +1701,15 @@ class OpenRouterClient @Inject constructor(
         return messages.takeLast(MAX_CONTEXT_MESSAGES)
     }
 
+    /** Response format — controls how executeWithRetry parses the body. */
+    private enum class ParseFormat { OPENAI_COMPAT, ANTHROPIC }
+
     companion object {
         private const val TAG = "OpenRouterClient"
         private const val OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+        private const val OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+        private const val ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+        private const val ANTHROPIC_VERSION = "2023-06-01"
         private const val DNS_RESOLUTION_ERROR_MESSAGE =
             "Cannot resolve openrouter.ai (DNS/network issue). Verify internet access, disable broken Private DNS/VPN, then retry."
         private const val EXPECTED_TOOL_ARGUMENTS_FORMAT =

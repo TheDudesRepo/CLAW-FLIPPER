@@ -12,22 +12,74 @@ import javax.inject.Singleton
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "vesper_settings")
 
+/**
+ * Supported AI providers. OpenRouter is the default for backwards compatibility.
+ */
+enum class AiProvider(val displayName: String) {
+    OPENROUTER("OpenRouter"),
+    ANTHROPIC("Anthropic"),
+    OPENAI("OpenAI");
+
+    companion object {
+        fun fromString(value: String?): AiProvider =
+            entries.find { it.name.equals(value, ignoreCase = true) } ?: OPENROUTER
+    }
+}
+
 @Singleton
 class SettingsStore @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
 
-    // OpenRouter API Key
-    private val API_KEY = stringPreferencesKey("openrouter_api_key")
+    // AI Provider selection
+    private val AI_PROVIDER = stringPreferencesKey("ai_provider")
 
-    val apiKey: Flow<String?> = context.dataStore.data.map { preferences ->
-        preferences[API_KEY]
+    val aiProvider: Flow<AiProvider> = context.dataStore.data.map { preferences ->
+        AiProvider.fromString(preferences[AI_PROVIDER])
     }
 
+    suspend fun setAiProvider(provider: AiProvider) {
+        context.dataStore.edit { preferences ->
+            preferences[AI_PROVIDER] = provider.name
+        }
+    }
+
+    // Per-provider API Keys
+    private val OPENROUTER_API_KEY = stringPreferencesKey("openrouter_api_key")
+    private val ANTHROPIC_API_KEY = stringPreferencesKey("anthropic_api_key")
+    private val OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
+
+    /** Returns the API key for the currently selected provider. */
+    val apiKey: Flow<String?> = context.dataStore.data.map { preferences ->
+        val provider = AiProvider.fromString(preferences[AI_PROVIDER])
+        when (provider) {
+            AiProvider.OPENROUTER -> preferences[OPENROUTER_API_KEY]
+            AiProvider.ANTHROPIC -> preferences[ANTHROPIC_API_KEY]
+            AiProvider.OPENAI -> preferences[OPENAI_API_KEY]
+        }
+    }
+
+    val openRouterApiKey: Flow<String?> = context.dataStore.data.map { it[OPENROUTER_API_KEY] }
+    val anthropicApiKey: Flow<String?> = context.dataStore.data.map { it[ANTHROPIC_API_KEY] }
+    val openAiApiKey: Flow<String?> = context.dataStore.data.map { it[OPENAI_API_KEY] }
+
+    /** Legacy setter — writes to the OpenRouter key slot. */
     suspend fun setApiKey(key: String) {
         context.dataStore.edit { preferences ->
-            preferences[API_KEY] = key
+            preferences[OPENROUTER_API_KEY] = key
         }
+    }
+
+    suspend fun setOpenRouterApiKey(key: String) {
+        context.dataStore.edit { it[OPENROUTER_API_KEY] = key }
+    }
+
+    suspend fun setAnthropicApiKey(key: String) {
+        context.dataStore.edit { it[ANTHROPIC_API_KEY] = key }
+    }
+
+    suspend fun setOpenAiApiKey(key: String) {
+        context.dataStore.edit { it[OPENAI_API_KEY] = key }
     }
 
     // Selected Model
@@ -303,6 +355,8 @@ class SettingsStore @Inject constructor(
     companion object {
         // Default to the largest Hermes 4 model on OpenRouter.
         const val DEFAULT_MODEL = "nousresearch/hermes-4-405b"
+        const val DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-6"
+        const val DEFAULT_OPENAI_MODEL = "gpt-5.4"
         // Shimmer: soft, warm female — default TTS voice (OpenAI via OpenRouter)
         const val DEFAULT_TTS_VOICE = "shimmer"
         const val DEFAULT_AI_MAX_ITERATIONS = 10
@@ -324,6 +378,34 @@ class SettingsStore @Inject constructor(
             ModelInfo("moonshotai/kimi-k2", "Kimi K2", "Latest Moonshot"),
             ModelInfo("z-ai/glm-4.5", "GLM 4.5", "Latest Z.ai")
         )
+
+        /** Models shown when Anthropic is selected as the direct provider. */
+        val ANTHROPIC_MODELS = listOf(
+            ModelInfo("claude-opus-4-6", "Claude Opus 4", "Most capable Anthropic model"),
+            ModelInfo("claude-sonnet-4-20250514", "Claude Sonnet 4", "Fast, smart, tool-use optimized"),
+            ModelInfo("claude-3-5-haiku-20241022", "Claude 3.5 Haiku", "Fastest, cheapest Anthropic model")
+        )
+
+        /** Models shown when OpenAI is selected as the direct provider. */
+        val OPENAI_MODELS = listOf(
+            ModelInfo("gpt-5.4", "GPT-5.4", "Latest flagship model"),
+            ModelInfo("gpt-4o", "GPT-4o", "Multimodal workhorse"),
+            ModelInfo("gpt-4o-mini", "GPT-4o Mini", "Fast, affordable"),
+            ModelInfo("o3", "o3", "Advanced reasoning"),
+            ModelInfo("o4-mini", "o4-mini", "Efficient reasoning")
+        )
+
+        fun defaultModelForProvider(provider: AiProvider): String = when (provider) {
+            AiProvider.OPENROUTER -> DEFAULT_MODEL
+            AiProvider.ANTHROPIC -> DEFAULT_ANTHROPIC_MODEL
+            AiProvider.OPENAI -> DEFAULT_OPENAI_MODEL
+        }
+
+        fun modelsForProvider(provider: AiProvider): List<ModelInfo> = when (provider) {
+            AiProvider.OPENROUTER -> FALLBACK_MODELS
+            AiProvider.ANTHROPIC -> ANTHROPIC_MODELS
+            AiProvider.OPENAI -> OPENAI_MODELS
+        }
 
         fun getModelDisplayName(
             modelId: String,

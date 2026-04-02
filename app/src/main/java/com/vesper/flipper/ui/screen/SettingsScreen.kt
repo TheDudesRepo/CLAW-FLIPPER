@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.vesper.flipper.data.AiProvider
 import com.vesper.flipper.data.SettingsStore
 import com.vesper.flipper.domain.model.Permission
 import com.vesper.flipper.ui.theme.*
@@ -55,11 +56,67 @@ fun SettingsScreen(
             // API Configuration Section
             item {
                 SettingsSection(title = "API Configuration") {
-                    // API Key
+                    // Provider selector
+                    var providerExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(
+                        expanded = providerExpanded,
+                        onExpandedChange = { providerExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = state.aiProvider.displayName,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("AI Provider") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(),
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerExpanded)
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = providerExpanded,
+                            onDismissRequest = { providerExpanded = false }
+                        ) {
+                            AiProvider.entries.forEach { provider ->
+                                DropdownMenuItem(
+                                    text = { Text(provider.displayName) },
+                                    onClick = {
+                                        viewModel.setAiProvider(provider)
+                                        providerExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = when (state.aiProvider) {
+                            AiProvider.OPENROUTER -> "Routes to 200+ models from all providers."
+                            AiProvider.ANTHROPIC -> "Direct Anthropic API — Claude models only."
+                            AiProvider.OPENAI -> "Direct OpenAI API — GPT/o-series models only."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // API Key — label and hint change based on provider
+                    val apiKeyLabel = when (state.aiProvider) {
+                        AiProvider.OPENROUTER -> "OpenRouter API Key"
+                        AiProvider.ANTHROPIC -> "Anthropic API Key"
+                        AiProvider.OPENAI -> "OpenAI API Key"
+                    }
+                    val apiKeyHint = when (state.aiProvider) {
+                        AiProvider.OPENROUTER -> "Starts with \"sk-or-\""
+                        AiProvider.ANTHROPIC -> "Starts with \"sk-ant-\""
+                        AiProvider.OPENAI -> "Starts with \"sk-\""
+                    }
                     OutlinedTextField(
                         value = state.apiKey,
                         onValueChange = { viewModel.setApiKey(it) },
-                        label = { Text("OpenRouter API Key") },
+                        label = { Text(apiKeyLabel) },
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = if (showApiKey) {
                             VisualTransformation.None
@@ -79,7 +136,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(12.dp)
                     )
                     Text(
-                        text = "Paste your OpenRouter key here (starts with \"sk-or-\").",
+                        text = apiKeyHint,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -97,29 +154,34 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(
-                            onClick = { viewModel.refreshAvailableModels() },
-                            enabled = !isRefreshingModels
-                        ) {
-                            if (isRefreshingModels) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Refreshing")
-                            } else {
-                                Icon(Icons.Default.Refresh, contentDescription = null)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Refresh")
+                        // Only show Refresh button for OpenRouter (fetches live catalog)
+                        if (state.aiProvider == AiProvider.OPENROUTER) {
+                            TextButton(
+                                onClick = { viewModel.refreshAvailableModels() },
+                                enabled = !isRefreshingModels
+                            ) {
+                                if (isRefreshingModels) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Refreshing")
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Refresh")
+                                }
                             }
                         }
                     }
-                    Text(
-                        text = "Tool calls auto-fallback across multiple models; if it still fails, pick a different model and retry.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (state.aiProvider == AiProvider.OPENROUTER) {
+                        Text(
+                            text = "Tool calls auto-fallback across multiple models; if it still fails, pick a different model and retry.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
                     var modelExpanded by remember { mutableStateOf(false) }
                     ExposedDropdownMenuBox(
@@ -130,7 +192,7 @@ fun SettingsScreen(
                             value = viewModel.getModelDisplayName(state.selectedModel),
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("Model (OpenRouter)") },
+                            label = { Text("Model (${state.aiProvider.displayName})") },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .menuAnchor(),
