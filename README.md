@@ -1,15 +1,15 @@
 ```
- ██╗   ██╗ ██████╗ ███████╗██████╗ ███████╗██████╗
- ██║   ██║╚════██╗██╔════╝██╔══██╗██╔════╝██╔══██╗
- ██║   ██║ █████╔╝███████╗██████╔╝█████╗  ██████╔╝
- ╚██╗ ██╔╝ ╚═══██╗╚════██║██╔═══╝ ██╔══╝  ██╔══██╗
-  ╚████╔╝ ██████╔╝███████║██║     ███████╗██║  ██║
-   ╚═══╝  ╚═════╝ ╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝
+  ██████╗██╗      █████╗ ██╗    ██╗      ███████╗██╗     ██╗██████╗ ██████╗ ███████╗██████╗
+ ██╔════╝██║     ██╔══██╗██║    ██║      ██╔════╝██║     ██║██╔══██╗██╔══██╗██╔════╝██╔══██╗
+ ██║     ██║     ███████║██║ █╗ ██║█████╗█████╗  ██║     ██║██████╔╝██████╔╝█████╗  ██████╔╝
+ ██║     ██║     ██╔══██║██║███╗██║╚════╝██╔══╝  ██║     ██║██╔═══╝ ██╔═══╝ ██╔══╝  ██╔══██╗
+ ╚██████╗███████╗██║  ██║╚███╔███╔╝      ██║     ███████╗██║██║     ██║     ███████╗██║  ██║
+  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝       ╚═╝     ╚══════╝╚═╝╚═╝     ╚═╝     ╚══════╝╚═╝  ╚═╝
 ```
 
-# V3SP3R — The AI Brain for Your Flipper Zero
+# CLAW-FLIPPER — AI Brain for Your Flipper Zero
 
-> **Talk to your Flipper Zero like it's your partner-in-hacking.** Vesper turns your pocket hacking tool into an AI-powered command center — controlled entirely through natural language from your Android device or smart glasses.
+> **Talk to your Flipper Zero like it's your partner-in-hacking.** CLAW-FLIPPER turns your pocket hacking tool into an AI-powered command center — controlled entirely through natural language from your Android device or smart glasses. Now with **multi-provider support**: Anthropic (Claude), OpenAI, and OpenRouter.
 
 No menus. No manuals. Just natural language prompting.
 
@@ -21,7 +21,7 @@ No menus. No manuals. Just natural language prompting.
 
 ## Why Vesper?
 
-The Flipper Zero is one of the most versatile hardware hacking tools ever made — but navigating its menus, managing files, and crafting signals by hand is tedious. **Vesper eliminates the friction.** Plug in an AI brain via OpenRouter, connect over Bluetooth, and you have a voice-commanded hardware lab in your pocket.
+The Flipper Zero is one of the most versatile hardware hacking tools ever made — but navigating its menus, managing files, and crafting signals by hand is tedious. **CLAW-FLIPPER eliminates the friction.** Connect your AI provider of choice (Anthropic, OpenAI, or OpenRouter), pair over Bluetooth, and you have a voice-commanded hardware lab in your pocket.
 
 - **Instant expertise** — Don't memorize SubGHz protocols or IR formats. Just say what you want.
 - **Real-time control** — The AI reads your Flipper's state, executes commands, and reports back in seconds.
@@ -110,19 +110,31 @@ Every action the AI takes is logged:
 
 ---
 
-## Recommended AI Models
+## AI Providers & Models
 
-Vesper works with any model on [OpenRouter](https://openrouter.ai). For the best experience:
+CLAW-FLIPPER supports **three AI providers** — choose the one that works for you:
 
+### Anthropic (Claude) — Direct API
 | Model | Why Use It | Speed | Cost |
 |-------|-----------|-------|------|
-| **`nousresearch/hermes-4`** | Outstanding tool-use — purpose-built for agentic workflows. Top pick for power users. | Fast | $$ |
-| **`anthropic/claude-opus-4.6`** | Most capable reasoning model. Exceptional at complex multi-step operations and signal analysis. | Medium | $$$$ |
-| **`anthropic/claude-sonnet-4`** | Best balance of speed, intelligence, and cost. Great default. | Fast | $$ |
-| **`anthropic/claude-haiku-4`** | Blazing fast for simple reads and quick commands. | Fastest | $ |
-| **`openai/gpt-4o`** | Strong general-purpose alternative. | Fast | $$ |
+| **`claude-opus-4-6`** ⭐ | Most capable reasoning model. Default. Exceptional at complex multi-step operations and signal analysis. | Medium | $$$$ |
+| **`claude-sonnet-4-20250514`** | Best balance of speed, intelligence, and cost. | Fast | $$ |
+| **`claude-haiku-4-20250414`** | Blazing fast for simple reads and quick commands. | Fastest | $ |
 
-**Our recommendation:** Start with **Hermes 4** or **Claude Sonnet 4** for daily use. Reach for **Claude Opus 4.6** when you need deep reasoning.
+### OpenAI — Direct API
+| Model | Why Use It | Speed | Cost |
+|-------|-----------|-------|------|
+| **`gpt-5.4`** ⭐ | Latest and most capable. Default. | Medium | $$$$ |
+| **`gpt-4o`** | Strong general-purpose alternative. | Fast | $$ |
+| **`gpt-4o-mini`** | Fast and cheap for simple tasks. | Fastest | $ |
+
+### OpenRouter — Multi-Model Gateway
+| Model | Why Use It | Speed | Cost |
+|-------|-----------|-------|------|
+| **`nousresearch/hermes-4-405b`** | Outstanding tool-use — purpose-built for agentic workflows. | Fast | $$ |
+| Any model on [openrouter.ai](https://openrouter.ai) | Access 100+ models through one API key. | Varies | Varies |
+
+**Our recommendation:** Use **Anthropic with Claude Opus 4.6** for the best tool-calling experience. Use **OpenRouter** if you want to experiment with many models.
 
 ---
 
@@ -134,24 +146,28 @@ Vesper works with any model on [OpenRouter](https://openrouter.ai). For the best
 |------|-------|
 | **Flipper Zero** | [shop.flipperzero.one](https://shop.flipperzero.one) |
 | **Android device** | Android 8.0+ (API 26), Bluetooth required |
-| **OpenRouter account** | Free signup, pay-per-use — [openrouter.ai](https://openrouter.ai) |
+| **AI API key** | Anthropic, OpenAI, or OpenRouter (see below) |
 
 ### 1. Prep Your Flipper
 1. Charge it up (USB-C)
 2. Update firmware via [qFlipper](https://flipperzero.one/update) (recommended)
 3. Enable Bluetooth: Settings > Bluetooth > ON
 
-### 2. Get an OpenRouter API Key
-1. Sign up at [openrouter.ai](https://openrouter.ai)
-2. Go to **Keys** > **Create Key**
-3. Copy the key (`sk-or-...`) — you'll paste this into Vesper
-4. Add $5-10 in credits to start (most conversations cost pennies)
+### 2. Get an API Key
+
+Pick your provider:
+
+| Provider | Sign Up | Key Format |
+|----------|---------|------------|
+| **Anthropic** (recommended) | [console.anthropic.com](https://console.anthropic.com) | `sk-ant-...` |
+| **OpenAI** | [platform.openai.com](https://platform.openai.com) | `sk-...` |
+| **OpenRouter** | [openrouter.ai](https://openrouter.ai) | `sk-or-...` |
 
 ### 3. Build & Install
 
 ```bash
-git clone https://github.com/elder-plinius/V3SP3R.git
-cd V3SP3R
+git clone https://github.com/TheDudesRepo/CLAW-FLIPPER.git
+cd CLAW-FLIPPER
 ```
 
 Open the project in [Android Studio](https://developer.android.com/studio), let Gradle sync, then:
@@ -173,9 +189,10 @@ Install via USB debugging or transfer the APK to your phone.
 
 ### 4. First Launch
 1. **Grant permissions** — Bluetooth, Location (required for BLE scanning), Notifications
-2. **Add your API key** — Settings > paste your OpenRouter key
-3. **Connect** — Device tab > Scan > tap your Flipper
-4. **Go** — Chat tab > start talking to your Flipper
+2. **Choose your AI provider** — Settings > select Anthropic, OpenAI, or OpenRouter
+3. **Add your API key** — Paste the key for your selected provider
+4. **Connect** — Device tab > Scan > tap your Flipper
+5. **Go** — Chat tab > start talking to your Flipper
 
 ---
 
@@ -318,8 +335,8 @@ V3SP3R/
 <details>
 <summary><strong>AI not responding</strong></summary>
 
-1. Verify your OpenRouter API key in Settings
-2. Check your OpenRouter credit balance at [openrouter.ai](https://openrouter.ai)
+1. Verify your API key in Settings (correct provider selected?)
+2. If using OpenRouter, check your credit balance at [openrouter.ai](https://openrouter.ai)
 3. Check internet connection
 4. Try a different model — some may be temporarily unavailable
 </details>
